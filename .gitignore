@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.log
+.DS_Store
+*.tflite
+*.onnx
+*.pt
+*.pth
+*.safetensors
