@@ -1,0 +1,12 @@
+# Hermes cron job для автономного пайплайна откликов.
+# Изменение конфига: cronjob pause → remove → create (update может молча не примениться).
+name: HH.ru AI автоотклики
+schedule: "0 9 */2 * *"        # каждые 2 дня, 09:00 MSK
+deliver: origin                # stdout → Telegram (дублируется прямым Bot API из telegram.py)
+no_agent: true                 # чистый скрипт, без LLM-инференса
+script: python3 -m src.pipeline
+workdir: ~/.hermes/hh-ai-vacancies
+env:
+  DRY_RUN: "0"                 # live-режим ТОЛЬКО после утверждения T7
+  APPLY_LIMIT: "0"             # 0 = без ограничения; на первый live-прогон ставить 2
+  APPLY_PAUSE_SEC: "5"
