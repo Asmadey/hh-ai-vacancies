@@ -9,3 +9,8 @@ __pycache__/
 *.pt
 *.pth
 *.safetensors
+
+# HH OAuth tokens — SECRET (user access+refresh pair)
+data/hh_tokens.json
+data/hh_tokens.json.tmp
+data/hh_tokens.json.bak
