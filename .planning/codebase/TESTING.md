@@ -2,186 +2,212 @@
 
 **Analysis Date:** 2026-07-22
 
+Scope: tests under `hh-ai-vacancies/tests/`, evals under `hh-ai-vacancies/evals/`. The repo root holds only `.claude/` config and the `hh-ai-vacancies/` app dir.
+
 ## Test Framework
 
 **Runner:**
-- `pytest` (version not pinned — no `requirements.txt` / `pyproject.toml`; pytest is the only dev dependency).
-- No config file. No `pytest.ini`, `setup.cfg`, `pyproject.toml [tool.pytest]`, or `conftest.py` at repo root. Settings come from defaults + `tests/conftest.py` fixtures.
-- `tests/conftest.py` is the single fixture/harness file (~117 lines).
+- `pytest` (version not pinned; cache tags show `pytest-9.1.1`, `cpython-310`).
+- No config file — no `pytest.ini`, `pyproject.toml`, `setup.cfg`, `tox.ini`, or `conftest.py` at repo root. pytest runs on defaults.
+- `tests/__init__.py` makes `tests/` an importable package so `from tests.conftest import ...` works (see `hh-ai-vacancies/tests/test_apply.py:8`).
 
 **Assertion Library:**
-- Plain `assert` statements throughout. No `unittest` TestCase classes, no `pytest.raises` helper beyond exception assertions. No third-party assertion libs.
+- Plain `assert` statements throughout — no `unittest` asserts, no `assertpy`. `pytest.raises` for exception assertions.
 
 **Run Commands:**
 ```bash
-python3 -m pytest                       # Run all tests (53 cases across tests/)
-python3 -m pytest tests/test_apply.py    # Single file
-python3 -m pytest tests/test_apply.py::test_429_backoff_respects_retry_after  # Single test
-python3 -m pytest -x                    # Stop on first failure
-python3 -m pytest -k dry_run             # Filter by keyword
-python3 -m pytest -q                     # Quiet
+python3 -m pytest                                  # run all (53 cases)
+python3 -m pytest tests/test_apply.py               # single file
+python3 -m pytest tests/test_apply.py::test_429_backoff_respects_retry_after  # single test
+python3 -m pytest -k cover                         # by keyword
+python3 -m pytest --cov=src --cov-report=term-missing   # coverage (see Coverage below)
 ```
-No watch mode, no coverage CLI configured (a `.coverage` file exists from a past run but there is no `coverage` config or `pytest-cov` invocation in docs).
 
-**Test count:** 53 pytest cases per `CLAUDE.md`, spread across 8 test files (`tests/test_apply.py` 12, `tests/test_auth.py` 7, `tests/test_cover.py` 5, `tests/test_cron_config.py` 2, `tests/test_fetch_enrich.py` 7, `tests/test_pipeline_e2e.py` 5, `tests/test_sheets_telegram.py` 6, `tests/test_store.py` 8 — counts as written).
+There is also a coverage artifact at `hh-ai-vacancies/.coverage` (53 KB) indicating coverage has been run, though no coverage config is committed.
 
 ## Test File Organization
 
-**Location:** separate `tests/` directory at repo root (tests are NOT co-located with `src/` modules). One test file per `src/` module + one E2E file:
-- `tests/test_apply.py` ↔ `src/apply.py`
-- `tests/test_auth.py` ↔ `src/auth.py`
-- `tests/test_cover.py` ↔ `src/cover.py`
-- `tests/test_fetch_enrich.py` ↔ `src/fetch.py` + `src/enrich.py`
-- `tests/test_store.py` ↔ `src/store.py`
-- `tests/test_sheets_telegram.py` ↔ `src/sheets_export.py` + `src/telegram.py`
-- `tests/test_cron_config.py` ↔ `config/cron.yaml` + `src/pipeline.py` import smoke
-- `tests/test_pipeline_e2e.py` ↔ `src/pipeline.py` (full `run()` integration)
-- `tests/conftest.py` — shared fixtures and helpers
-- `tests/__init__.py` — empty (makes `tests` a package so `from tests.conftest import ...` works)
+**Location:**
+- Tests live in `hh-ai-vacancies/tests/`, separate from `src/` (not co-located). Each test file mirrors one or two source modules.
+- Eval scripts live in `hh-ai-vacancies/evals/` — these are runtime goal-checks invoked after a pipeline run, not part of the pytest suite (importable but not collected as tests).
 
 **Naming:**
-- Files: `tests/test_<module_under_test>.py`.
-- Functions: `test_<behavior>` in `snake_case`, often starting with the subject (`test_apply_...`, `test_enrich_...`, `test_429_...`, `test_dry_run_...`, `test_e2e_...`).
-- Russian words appear in test names where the behavior is Russian-status-bound: `test_limit_exceeded_stops_batch`, `test_test_required_status`, `test_already_applied_counts_as_sent`.
+- `test_<module>.py` for module-focused tests: `test_apply.py`, `test_auth.py`, `test_store.py`, `test_cover.py`, `test_cron_config.py`.
+- Composite names for cross-module coverage: `test_fetch_enrich.py` (`src/fetch.py` + `src/enrich.py`), `test_sheets_telegram.py` (`src/sheets_export.py` + `src/telegram.py`).
+- End-to-end: `test_pipeline_e2e.py` (`src/pipeline.py` driving the whole flow).
+- Fixtures + helpers: `conftest.py` only — no `helpers.py` or `utils.py`.
 
 **Structure:**
 ```
-tests/
-├── __init__.py
-├── conftest.py             # fixtures: home, mock_http, no_sleep, tg_capture, tokens_file
-│                            # helpers: make_resp, search_item, vacancy_details, MockHttp
-├── test_apply.py            # apply statuses, backoff, batch, dry_run, select
-├── test_auth.py             # token refresh loop, 403-oauth retry, alerts
-├── test_cover.py            # letter_ok bounds, clean_letter, fallback, parallel
-├── test_cron_config.py      # cron.yaml exists & points to pipeline (smoke)
-├── test_fetch_enrich.py    # filters, dedup, enrichment, archived
-├── test_pipeline_e2e.py     # full DRY_RUN run, idempotency, migration, evals
-├── test_sheets_telegram.py  # rows == JSON, no-back-read invariant, report numbers
-└── test_store.py            # schema validation, merge idempotency, migration
+hh-ai-vacancies/tests/
+├── __init__.py            # empty, makes tests/ importable
+├── conftest.py            # fixtures: home, mock_http, no_sleep, tg_capture, tokens_file; helpers make_resp/search_item/vacancy_details
+├── test_apply.py          # TC-10, TC-11, TC-12 — apply statuses, backoff, batch
+├── test_auth.py           # TC-02, TC-03 — refresh loop, alerts
+├── test_cover.py          # TC-09 — letter bounds/cleaning, fallback, 100% generation
+├── test_cron_config.py    # TC-01 — cron.yaml shape + pipeline.run importable
+├── test_fetch_enrich.py   # fetch filters/dedup + TC-08 enrichment
+├── test_pipeline_e2e.py   # TC-01, TC-04, TC-06, TC-12, evals — full DRY_RUN run
+├── test_sheets_telegram.py # TC-05, TC-13, TC-14 — rows, no-read rule, report numbers
+└── test_store.py          # TC-04, TC-06, TC-07 — schema, merge idempotency, migration
 ```
 
 ## Test Structure
 
-**Suite organization:** flat module-level `def test_*` functions. No `class` grouping. Test order in a file follows the test-case ID order documented in the module docstring.
-
-**Test docstrings** reference the formal test case IDs from the spec (`docs/`-implied TC-NN):
+**Suite Organization:**
 ```python
-def test_apply_success_message_is_cover_letter(home, mock_http, no_sleep):
-    """TC-10: message == cover_letter записи; статус отправлено; applied_at выставлен."""
-```
-`tests/test_apply.py` opens with `"""TC-10, TC-11, TC-12: отклики, статусы, backoff, паузы."""` — each test then maps to a TC. Follow this convention for new tests: cite the TC ID in the function docstring.
+"""TC-10, TC-11, TC-12: отклики, статусы, backoff, паузы."""   # TC IDs in module docstring
+import urllib.parse
 
-**Standard test shape:**
-```python
-def test_X(home, mock_http, no_sleep):
-    rec = _rec()                                          # build minimal record
-    mock_http.add("/negotiations", make_resp(201, b""))   # queue response(s)
-    apply_mod.apply_one(rec, "resume-42", dict(TOKENS))  # call SUT
-    assert rec["status"] == config.STATUS_SENT            # assert on state + calls
-    assert mock_http.calls_to("/negotiations")[0]["data"]  # assert HTTP shape
-```
+import pytest
 
-**Setup/teardown:** no explicit setup/teardown functions. Isolation comes from fixtures (`home` sets `HH_PIPELINE_HOME` to a `tmp_path`, so every `data/` write lands in a temp dir; `mock_http` swaps the HTTP entry point; `no_sleep` patches `time.sleep`). `tmp_path` and `monkeypatch` are pytest built-ins — no manual cleanup needed.
+from src import apply as apply_mod
+from src import config, http_client, store
+from tests.conftest import TOKENS, make_resp
 
-## Mocking
 
-**Framework:** `monkeypatch` (pytest built-in). No `unittest.mock`, no `mocker` fixture, no `responses`/`httpretty`. Everything is hand-rolled in `tests/conftest.py`.
-
-**The central mock — `MockHttp`** (`tests/conftest.py:MockHttp`):
-- A callable that replaces `http_client.request`. Installed by the `mock_http` fixture: `monkeypatch.setattr(http_client, "request", mock)`.
-- FIFO queue of `(url_substring, response_or_exception)` pairs. Each call pops the first matching entry by substring (`substr in url`). An unmatched URL raises `AssertionError("Unexpected HTTP call: ...")` — so a missing mock surfaces loudly.
-- Records every call in `mock.calls` as `{"method", "url", "headers", "data"}`. Inspect with `mock.calls_to("/negotiations")`.
-- To queue an exception (network down): `mock_http.add("/negotiations", http_client.NetworkError("conn refused"))`.
-
-**Response builder — `make_resp(status, body=None, headers=None)`** (`tests/conftest.py:make_resp`):
-- Wraps `http_client.HttpResponse`. Accepts a `dict`/`list` (JSON-encoded) or raw bytes.
-- Use for every HTTP response in tests: `make_resp(200, {"items": [...]})`, `make_resp(201, b"")`, `make_resp(403, {"errors": [...]})`.
-
-**Fixtures** (all in `tests/conftest.py`):
-- `home` — sets `HH_PIPELINE_HOME=<tmp_path>`, `DRY_RUN=1`, `HH_RESUME_ID=resume-42`, `APPLY_LIMIT=0`, clears `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `OLLAMA_API_KEY`. **Almost every test depends on `home`** — it is the isolation boundary.
-- `mock_http` — installs `MockHttp` as `http_client.request`. Returns the mock instance.
-- `no_sleep` — patches `src.apply.time.sleep` to record into a list; returns the list so tests assert `any(s >= 7 for s in no_sleep)`. Only needed for `apply` tests.
-- `tg_capture` — patches `src.telegram._send` to capture text without sending; returns the list of sent messages. Assert `any("auth failure" in t for t in tg_capture)`.
-- `tokens_file` — writes the `TOKENS` dict (`tests/conftest.py:TOKENS`) to `<home>/data/hh_tokens.json` and returns the path. Depends on `home`. Required for any test that exercises `auth.load_tokens`.
-
-**Fixture builders** (module-level helpers in `tests/conftest.py`, imported into test files):
-- `search_item(vid="100", name="AI Product Manager", **kw)` — builds an HH `/vacancies` search result item.
-- `vacancy_details(vid="100", **kw)` — builds an HH `/vacancies/{id}` detail response (with `archived=False` default).
-- `TOKENS` — the canonical token dict `{"access_token": "AT1", "refresh_token": "RT1", "expires_in": 1209600, "obtained_at": "..."}`.
-
-**Per-file helpers** (private, prefixed `_`): each test file declares its own minimal builders — `_rec(vid, letter)` in `tests/test_apply.py`, `_vac(n)` and `_rec` in `tests/test_sheets_telegram.py` / `tests/test_store.py`, `_add_search_responses` / `_mock_full_run` in fetch/pipeline tests. Reuse `tests/conftest.py` builders first; add a local `_helper` only when the test file needs something narrower.
-
-**What to mock:**
-- All HTTP calls — via `mock_http`. There is no live network in tests by design.
-- `time.sleep` in `apply` — via `no_sleep` (so backoff tests don't actually wait).
-- `telegram._send` — via `tg_capture` (so alert/report tests don't hit Telegram).
-- `config.LEGACY_SEEN_PATH` — via `monkeypatch.setattr(config, "LEGACY_SEEN_PATH", "/nonexistent/...")` to skip migration in non-migration tests.
-
-**What NOT to mock:**
-- `store.load` / `store.save` / `store.validate_record` — these run against the real `data/` dir (redirected to `tmp_path` by `home`). Tests verify real file I/O.
-- `config.dry_run()` / `config.apply_limit()` — read from the real env set by `home`. Override with `monkeypatch.setenv(...)` if a test needs a different value.
-- The pipeline itself (`pipeline.run()`) in E2E tests — exercise it end-to-end with mocked HTTP only.
-
-## Fixtures and Factories
-
-**Test data:**
-```python
-# Token fixture data (tests/conftest.py)
-TOKENS = {"access_token": "AT1", "refresh_token": "RT1", "expires_in": 1209600,
-          "obtained_at": "2026-07-01T00:00:00+00:00"}
-
-# HH search item (tests/conftest.py:search_item)
-search_item("100", "AI Product Manager", company="Acme AI", area="Москва",
-            salary={"from": 300000, "currency": "RUR"},
-            requirement="Опыт запуска AI продуктов")
-
-# HH vacancy details (tests/conftest.py:vacancy_details)
-vacancy_details("100", name="AI Product Manager", archived=True,
-                description="<p>Ищем <b>AI Product Manager</b>...</p>")
-
-# Apply test record (tests/test_apply.py:_rec)
-def _rec(vid="100", letter="Здравствуйте!\n\nПисьмо.\n\nБуду рад созвону."):
+def _rec(vid="100", letter="..."):                              # private helper at top
     r = store.new_record(vid, f"https://hh.ru/vacancy/{vid}", f"AI Lead {vid}")
     r["cover_letter"] = letter
     return r
+
+
+def test_apply_success_message_is_cover_letter(home, mock_http, no_sleep):
+    """TC-10: message == cover_letter записи; статус отправлено; applied_at выставлен."""
+    rec = _rec()
+    mock_http.add("/negotiations", make_resp(201, b"", {"Location": "/negotiations/xyz"}))
+    apply_mod.apply_one(rec, "resume-42", dict(TOKENS))
+    assert rec["status"] == config.STATUS_SENT and rec["applied_at"]
 ```
 
-**Location:** shared builders live in `tests/conftest.py`; file-local `_rec`/`_vac`/`_add_search_responses` helpers live in the test file that uses them. No `tests/fixtures/` directory, no JSON fixture files, no `factory_boy`.
+(See `hh-ai-vacancies/tests/test_apply.py:1-29`.)
 
-**Factory conventions:**
-- Defaults are realistic HH-shaped data (Moscow, RUR, full-time, remote).
-- `**kw` overrides — every builder accepts keyword overrides for the fields that vary between tests (`archived=`, `name=`, `company=`, `salary=`).
-- IDs are string ints (`"100"`, `"1"`, `"2"`) — `vacancy_id` is always a string in the store.
+**Patterns:**
+- **Setup:** via pytest fixtures (`home`, `mock_http`, `tokens_file`) — no `setUp`/`tearDown`, no class-based tests. Every test is a top-level function.
+- **Teardown:** `tmp_path` + `monkeypatch` auto-cleaned by pytest; the `home` fixture (`tests/conftest.py:12`) sets `HH_PIPELINE_HOME` to a temp dir so all `data/` writes land there and clear Telegram/Ollama env. No manual teardown needed.
+- **Assertion style:** plain `assert` with boolean composition: `assert rec["status"] == config.STATUS_SENT and rec["applied_at"]` (`tests/test_apply.py:26`). Multiple asserts per test are fine.
+- **One concern per test:** tests are short (3-12 lines) and named `test_<behavior>_<condition>`: `test_429_backoff_respects_retry_after`, `test_limit_exceeded_stops_batch`, `test_batch_stop_defers_remaining`, `test_e2e_second_run_idempotent`.
+- **Docstrings:** Russian, lead with the TC ID — `"""TC-10: message == cover_letter записи; статус отправлено; applied_at выставлен."""`. Match this for new tests.
+
+## Mocking
+
+**Framework:** `monkeypatch` (pytest built-in). No `unittest.mock`, no `pytest-mock` plugin.
+
+**Patterns:**
+- **Single HTTP entrypoint mocked.** All HTTP goes through `src.http_client.request`; tests monkeypatch that one function. The `MockHttp` class (`hh-ai-vacancies/tests/conftest.py:29-50`) is a callable FIFO queue matched by URL substring:
+  ```python
+  @pytest.fixture
+  def mock_http(monkeypatch):
+      mock = MockHttp()
+      monkeypatch.setattr(http_client, "request", mock)
+      return mock
+  ```
+  Usage in a test (`tests/test_apply.py:24`):
+  ```python
+  mock_http.add("/negotiations", make_resp(201, b"", {"Location": "/negotiations/xyz"}))
+  apply_mod.apply_one(rec, "resume-42", dict(TOKENS))
+  assert mock_http.calls_to("/negotiations")[0]["data"]  # assert on recorded calls
+  ```
+- **Raising on unmatched calls.** `MockHttp.__call__` raises `AssertionError(f"Unexpected HTTP call: {method} {url}")` (`conftest.py:47`) when no queued substring matches — every live-network leak in tests fails loudly. Always route new HTTP through `http_client.request` or it bypasses this harness.
+- **Simulating failures.** Queue an exception instance instead of a response: `mock_http.add("/negotiations", http_client.NetworkError("conn refused"))` (`tests/test_apply.py:53`) — `MockHttp` raises it on match (`conftest.py:44`).
+- **Sleep patching.** `no_sleep` fixture (`conftest.py:60-66`) patches `time.sleep` in `src.apply` and records the requested delays into a list:
+  ```python
+  @pytest.fixture
+  def no_sleep(monkeypatch):
+      sleeps = []
+      import src.apply as apply_mod
+      monkeypatch.setattr(apply_mod.time, "sleep", lambda s: sleeps.append(s))
+      return sleeps
+  ```
+  Tests assert on delays: `assert any(s >= 7 for s in no_sleep)` (`tests/test_apply.py:73`).
+- **Telegram capture.** `tg_capture` (`conftest.py:69-75`) replaces `telegram._send` with a list-append lambda:
+  ```python
+  monkeypatch.setattr(telegram, "_send", lambda text: (sent.append(text), True)[1])
+  ```
+  Tests assert alerts fired: `assert any("auth failure" in t for t in tg_capture)` (`tests/test_auth.py:52`).
+- **Config/env patching.** `monkeypatch.setenv` / `setattr` for `HH_PIPELINE_HOME`, `DRY_RUN`, `APPLY_LIMIT`, `LEGACY_SEEN_PATH` — see `tests/conftest.py:14-20` and `tests/test_pipeline_e2e.py:11` (`monkeypatch.setattr(config, "LEGACY_SEEN_PATH", "/nonexistent/seen.json")`).
+
+**What to Mock:**
+- `http_client.request` — for every HTTP call (HH API, Ollama, Telegram, Google Sheets token + write).
+- `time.sleep` in `src.apply` (via `no_sleep`) — never let tests actually sleep.
+- `telegram._send` (via `tg_capture`) — never send real Telegram messages from tests.
+- `config.LEGACY_SEEN_PATH` — point at a tmp file or `/nonexistent` to control migration behavior.
+- Env vars via `monkeypatch.setenv` / `delenv` — `HH_PIPELINE_HOME`, `DRY_RUN`, `TELEGRAM_BOT_TOKEN`, `OLLAMA_API_KEY`, `HH_RESUME_ID`, `APPLY_LIMIT`.
+
+**What NOT to Mock:**
+- `store` file I/O — let it write to the real filesystem under `HH_PIPELINE_HOME` (a temp dir). Tests assert by `store.load()` / `json.load(open(...))` against the real file (see `tests/test_store.py:25-31`, `tests/test_pipeline_e2e.py:26-35`).
+- `config` accessors — call them for real after setting env; the `home` fixture primes the env so `config.dry_run()`, `config.vacancies_path()` resolve to temp-dir values.
+- `cover` fallback logic — `test_cover.py` runs `generate_for_record` for real with no `OLLAMA_API_KEY` and asserts the deterministic fallback passes `letter_ok` (`tests/test_cover.py:34-39`).
+
+## Fixtures and Factories
+
+**Test Data (builders in `hh-ai-vacancies/tests/conftest.py`):**
+```python
+def make_resp(status, body=None, headers=None):
+    raw = json.dumps(body, ensure_ascii=False).encode() if isinstance(body, (dict, list)) else (body or b"")
+    return http_client.HttpResponse(status, raw, headers or {})
+
+def search_item(vid="100", name="AI Product Manager", **kw):
+    return {"id": vid, "name": name, "alternate_url": f"https://hh.ru/vacancy/{vid}",
+            "apply_alternate_url": f"https://hh.ru/applicant/vacancy_response?vacancyId={vid}",
+            "employer": {"name": kw.get("company", "Acme AI")},
+            "area": {"name": kw.get("area", "Москва")},
+            "salary": kw.get("salary"),
+            "snippet": {"requirement": kw.get("requirement", "Опыт запуска AI продуктов")}}
+
+def vacancy_details(vid="100", **kw):
+    return {"id": vid, "name": kw.get("name", "AI Product Manager"),
+            "alternate_url": f"https://hh.ru/vacancy/{vid}", /* ...full HH shape... */
+            "archived": kw.get("archived", False)}
+```
+Use these for any new test that needs HH-shaped payloads — they encode the real HH `/vacancies` and `/vacancies/{id}` response shapes.
+
+**Module-level fixture data:**
+- `TOKENS` (`conftest.py:78`) — the canonical token dict (`access_token="AT1"`, `refresh_token="RT1"`, `expires_in=1209600`, `obtained_at="2026-07-01T00:00:00+00:00"`). Pass via `dict(TOKENS)` so tests don't mutate the shared constant (see `tests/test_apply.py:25`, `tests/test_auth.py:16`).
+
+**Per-file helpers:** Each test file defines `_rec` / `_vac` / `_add_search_responses` at the top (e.g. `tests/test_apply.py:11`, `tests/test_sheets_telegram.py:8`, `tests/test_fetch_enrich.py:8`). Keep new file-local helpers private (`_`-prefixed) and at the top of the file.
+
+**Location:**
+- Shared: `hh-ai-vacancies/tests/conftest.py` (fixtures + builders + `TOKENS`).
+- File-local: top of each `tests/test_*.py`.
 
 ## Coverage
 
-**Requirements:** None enforced. No `pytest-cov`, no coverage gate in CI, no threshold in `CLAUDE.md` or `SKILL.md`. A stale `.coverage` file exists at repo root but there is no `coverage` config and no documented coverage command.
+**Requirements:** No enforced threshold. No `--cov-fail-under` config. Coverage artifact `hh-ai-vacancies/.coverage` (53 KB) exists from prior runs.
 
-**View Coverage:** not configured. If needed:
+**View Coverage:**
 ```bash
 python3 -m pytest --cov=src --cov-report=term-missing
 ```
-(but `pytest-cov` is not listed as installed — would need to be added.)
+(No `.coveragerc`; defaults apply.)
 
-**Implicit coverage target:** `CLAUDE.md` says "Tests are 53 pytest cases across `tests/`" — the bar is "every stage module has a test file with happy + error paths", not a percentage. The E2E test (`tests/test_pipeline_e2e.py:test_e2e_dry_run_exit_0`) is the integration backstop.
+**Effective coverage by design:** every `src/` module has a paired `tests/test_*.py`, and the e2e test (`tests/test_pipeline_e2e.py:19`) exercises the full `src.pipeline.run()` path under DRY_RUN with mocked HTTP. The 53-test suite is tracked in `CLAUDE.md` ("Tests are 53 pytest cases").
 
 ## Test Types
 
-**Unit tests:** per-module, one `test_<module>.py` per `src/` module. Each unit test exercises one function with mocked HTTP and isolated `data/`. State assertions (`rec["status"]`, `rec["status_reason"]`) + HTTP shape assertions (`mock_http.calls_to(...)`). Examples: `test_apply_success_message_is_cover_letter`, `test_enrich_fills_structured_fields`, `test_refresh_success_saves_new_pair`.
+**Unit Tests:**
+- Module-scoped, one source module per test file. Use `mock_http` to stub HTTP and assert on in-memory record mutations + recorded calls. Examples: `tests/test_store.py` (pure dict/JSON, no HTTP), `tests/test_apply.py` (HTTP mocked, statuses asserted), `tests/test_cover.py` (no `OLLAMA_API_KEY` → deterministic fallback path), `tests/test_auth.py` (refresh + retry loop).
 
-**Integration tests:** `tests/test_pipeline_e2e.py` — calls `pipeline.run()` against a fully-mocked HTTP surface, then asserts on the real `data/vacancies.json` + `data/last_run_report.json`. Covers: happy path (exit 0), idempotency (second run = 0 new), migration (`seen.json` pulled in on first run), missing-tokens fatal (exit 2 + alert), and the `evals/check_metrics.py` goal check (`check_metrics.check()` returns `(metrics, 0)`).
+**Integration Tests:**
+- `tests/test_pipeline_e2e.py` — drives `pipeline.run()` end-to-end with `_mock_full_run` (`tests/test_pipeline_e2e.py:10`) queueing search responses for every keyword + detail responses per item. Asserts exit code, persisted `vacancies.json`, `last_run_report.json`, and `evals.check_metrics.check()` returning `goal_reached`.
+- `tests/test_sheets_telegram.py:test_no_module_reads_sheets` (`tests/test_sheets_telegram.py:36`) — a static source-grep assertion that no `src/` module other than `sheets_export.py` mentions `sheets.googleapis`. This is an architectural-invariant test, not a behavior test.
 
-**E2E / system tests:** Not used. There is no live-network test and no test that writes to a real Google Sheet / Telegram / HH. The `no-back-read` invariant (`tests/test_sheets_telegram.py:test_no_module_reads_sheets`) is a static-analysis test that greps `src/*.py` for `sheets.googleapis` to prove only `sheets_export.py` touches Sheets.
+**E2E Tests:**
+- The pytest e2e test is the closest to E2E and runs fully offline (all HTTP mocked). There is no live-network or browser-driven E2E suite in this project.
 
-**Eval tests:** `evals/check_metrics.py:check()` is invoked from `tests/test_pipeline_e2e.py:test_check_metrics_goal_reached` — the deterministic goal checker is itself covered by a unit test. `evals/rate_cover_letters.py` (LLM rubric) is NOT tested — it requires a live Ollama key.
+**Eval scripts (post-run checks, not pytest):**
+- `hh-ai-vacancies/evals/check_metrics.py` — deterministic goal check reading `data/vacancies.json` + `data/last_run_report.json`; exit `0` when all criteria pass (`status_100pct`, `duplicates_zero`, `enrichment_ge_95`, `covers_100pct`, `sheets_eq_json`, `telegram_delivered`). Run after a pipeline run.
+- `hh-ai-vacancies/evals/rate_cover_letters.py` — LLM rubric scorer (separate Ollama call, threshold avg ≥7 and ≥80% of letters ≥7). Run via `python3 -m evals.rate_cover_letters --sample 5`.
 
 ## Common Patterns
 
-**Async / threading:** no `asyncio` in tests. The pipeline's `ThreadPoolExecutor` (cover letters) is exercised in `test_generate_all_covers_100pct` without any special async harness — `generate_all` runs synchronously via `as_completed` and the test just awaits the return.
+**Async Testing:**
+- N/A — no `asyncio` in the codebase. The only concurrency is `concurrent.futures.ThreadPoolExecutor` in `src/cover.py:151`, exercised synchronously by `tests/test_cover.py:test_generate_all_covers_100pct` (`tests/test_cover.py:42-50`) which just calls `cover.generate_all` and asserts all three records got letters.
 
-**Exception testing:**
+**Error Testing:**
 ```python
 def test_limit_exceeded_stops_batch(home, mock_http, no_sleep):
+    """TC-12: limit_exceeded → «не отправлено» + BatchStop."""
     rec = _rec()
     mock_http.add("/negotiations", neg_403("limit_exceeded"))
     with pytest.raises(apply_mod.BatchStop):
@@ -189,39 +215,44 @@ def test_limit_exceeded_stops_batch(home, mock_http, no_sleep):
     assert rec["status"] == config.STATUS_NOT_SENT
     assert rec["status_reason"] == "limit_exceeded"
 ```
-Use `pytest.raises(DomainException)` and then assert on the post-exception state (status/reason set before raise). For network-down: `pytest.raises(http_client.NetworkError)` is queued via `mock_http.add(url, http_client.NetworkError("..."))`.
+(From `hh-ai-vacancies/tests/test_apply.py:40-47`.) Pattern: queue the error response, `pytest.raises(<specific exception>)`, then assert the status/reason fields the error handler should have set.
 
-**Status / reason assertion pattern:**
+**HTTP-error helper:** `neg_403(value)` (`tests/test_apply.py:17`) wraps `make_resp(403, {"errors": [{"type": "negotiations", "value": value}]})` — reuse it for negotiation-error tests.
+
+**Idempotency Testing:**
+- `tests/test_store.py:test_merge_idempotent_no_duplicates` (`tests/test_store.py:34-42`) and `tests/test_pipeline_e2e.py:test_e2e_second_run_idempotent` (`tests/test_pipeline_e2e.py:40-55`) run the same input twice and assert `new == 0, duplicates == 0` on the second pass. Replicate this for any new dedup/merge logic.
+
+**E2E mock setup helper:** `_mock_full_run(mock_http, monkeypatch, items)` (`tests/test_pipeline_e2e.py:10`) is the template for a full-pipeline test — it queues one keyword hit and `len(KEYWORDS)-1` empty responses, then a detail response per item. Copy this pattern for new e2e scenarios.
+
+**Invariant tests (source-grep):**
 ```python
-assert rec["status"] in config.VALID_STATUSES          # status enum check
-assert rec["status_reason"] == "limit_exceeded"        # exact reason
-assert all(v["status"] in config.VALID_STATUSES for v in vac.values())  # 100% with status
+def test_no_module_reads_sheets(home):
+    src_dir = os.path.join(...)
+    offenders = []
+    for path in glob.glob(os.path.join(src_dir, "*.py")):
+        if os.path.basename(path) == "sheets_export.py":
+            continue
+        if "sheets.googleapis" in open(path, encoding="utf-8").read():
+            offenders.append(os.path.basename(path))
+    assert offenders == []
 ```
-The `evals/check_metrics.py` criteria (status_100pct, duplicates_zero, enrichment_ge_95, covers_100pct, sheets_eq_json, telegram_delivered) are mirrored as test assertions in the E2E file.
+(From `hh-ai-vacancies/tests/test_sheets_telegram.py:36-45`.) Use this style to enforce architectural rules that are otherwise easy to violate silently.
 
-**Idempotency pattern:**
-```python
-# first run
-assert pipeline.run() == 0
-# second run with same search responses
-assert pipeline.run() == 0
-report = json.load(open(config.run_report_path()))
-assert report["new"] == 0 and report["duplicates"] == 0
+## Test Isolation Guarantees
+
+- `HH_PIPELINE_HOME` (set by `home` fixture) is the override knob for every `data/` path — `config.data_dir()` / `vacancies_path()` / `tokens_path()` / `run_report_path()` all read it (`hh-ai-vacancies/src/config.py:24-36`). Tests never touch the real `data/` dir.
+- `DRY_RUN=1` is the default in `home` (`tests/conftest.py:15`) and in `config.dry_run()` (`src/config.py:42`). Live `apply` only happens in tests that explicitly pass `dry_run=False` (e.g. `tests/test_apply.py:89,99,108,118`).
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `OLLAMA_API_KEY` are cleared in `home` so no test can leak a real message or a real Ollama call. Tests that need Telegram or Ollama mock them explicitly (via `tg_capture` / by leaving `OLLAMA_API_KEY` unset to hit the deterministic fallback).
+- `tokens_file` fixture writes the canonical `TOKENS` dict to `data/hh_tokens.json` under the temp dir so `auth.load_tokens()` succeeds without real credentials.
+
+## Commands Summary (from `hh-ai-vacancies/CLAUDE.md`)
+
+```bash
+python3 -m pytest                                       # all tests
+python3 -m pytest tests/test_apply.py::test_name        # single test
+python3 evals/check_metrics.py                          # goal check (exit 0 = goal)
+python3 -m evals.rate_cover_letters --sample 5          # LLM rubric (≥7/10)
 ```
-(`tests/test_pipeline_e2e.py:test_e2e_second_run_idempotent`.)
-
-**DRY_RUN assertion:** dry-run paths must make zero HTTP calls to the side-effecting endpoint:
-```python
-m, _ = apply_mod.apply_batch(vac, ["1"], "resume-42", dict(TOKENS), dry_run=True)
-assert mock_http.calls == []
-assert vac["1"]["status_reason"] == "dry_run"
-```
-
-**Env override:** `monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "T")` / `monkeypatch.setattr(config, "LEGACY_SEEN_PATH", "...")`. Always go through `monkeypatch`, never `os.environ[...] = ...` directly (it leaks across tests).
-
-**Stdout/stderr capture:** `capsys.readouterr().out` for the Hermes `deliver: origin` channel (the pipeline prints `DRY_RUN=...` and the report to stderr; `telegram._send` prints the report to stdout). Assert `"DRY_RUN" in out`.
-
-**Importing the SUT:** tests import as `from src import apply as apply_mod` (alias to avoid shadowing the `apply` builtin) and `from src import config, http_client, store`. Helpers come from `from tests.conftest import TOKENS, make_resp, search_item, vacancy_details`.
 
 ---
 

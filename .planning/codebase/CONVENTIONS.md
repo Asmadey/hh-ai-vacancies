@@ -2,187 +2,165 @@
 
 **Analysis Date:** 2026-07-22
 
-## Language & Dependency Policy
+Scope: application code under `hh-ai-vacancies/` (the `src/` package, `tests/`, `evals/`, `scripts/`). The repo root holds only `.claude/` config and the `hh-ai-vacancies/` app dir.
 
-**Python stdlib only** in the `src/` pipeline. Do not add `requests`, `httpx`, or any
-third-party runtime dep — the project deliberately has no `requirements.txt` /
-`pyproject.toml`. Permitted stdlib modules: `urllib.request`, `urllib.parse`,
-`urllib.error`, `json`, `re`, `os`, `sys`, `time`, `shutil`, `html`,
-`concurrent.futures`, `datetime`, `threading`. The only dev dependency is `pytest`
-(for tests). `evals/` and `scripts/` follow the same rule.
+## Language & Runtime
 
-Rationale (documented in `CLAUDE.md`): cron host has no venv pip install step;
-stdlib-only guarantees the pipeline runs on a bare `python3`.
+- Python 3.10 (cache files: `*.cpython-310.pyc` across `src/__pycache__/`, `tests/__pycache__/`).
+- **Stdlib only** for the `src/` pipeline — no `requests`, no third-party HTTP/JSON deps. HTTP is done via `urllib.request`/`urllib.error`/`urllib.parse` (see `hh-ai-vacancies/src/http_client.py`). Do not add third-party runtime dependencies; CLAUDE.md explicitly forbids it.
+- `pytest` is the only test dependency (not pinned in a `requirements.txt` — none exists).
 
 ## Naming Patterns
 
 **Files:**
-- `src/` modules: single-word lowercase, one stage per file — `fetch.py`, `enrich.py`, `cover.py`, `apply.py`, `store.py`, `auth.py`, `telegram.py`, `sheets_export.py`, `http_client.py`, `pipeline.py`, `config.py`.
-- `snake_case` for multiword: `sheets_export.py`, `http_client.py`.
-- Tests: `tests/test_<module>.py` mirroring the `src/` module under test — `tests/test_apply.py` ↔ `src/apply.py`. E2E tests: `tests/test_pipeline_e2e.py`.
-- Scripts: `scripts/<verb>_<noun>.py` — `hh_ai_vacancies.py`, `hh_token_updater.py`, `migrate_seen.py`.
-- Evals: `evals/<verb>_<noun>.py` — `check_metrics.py`, `rate_cover_letters.py`.
+- `src/` modules: single lowercase word, snake_case, one stage per file: `auth.py`, `fetch.py`, `store.py`, `enrich.py`, `cover.py`, `apply.py`, `sheets_export.py`, `telegram.py`, `http_client.py`, `config.py`, `pipeline.py`.
+- Tests: `test_<module>.py` mirroring the module under test — `tests/test_apply.py` ↔ `src/apply.py`, `tests/test_fetch_enrich.py` covers `src/fetch.py` + `src/enrich.py`, `tests/test_sheets_telegram.py` covers `src/sheets_export.py` + `src/telegram.py`. `tests/test_pipeline_e2e.py` covers `src/pipeline.py` end-to-end.
+- Evals: `evals/check_metrics.py`, `evals/rate_cover_letters.py` — verb-noun snake_case.
+- Scripts: `scripts/hh_ai_vacancies.py`, `scripts/hh_token_updater.py`, `scripts/migrate_seen.py`.
 
 **Functions:**
-- `snake_case` everywhere: `apply_one`, `enrich_record`, `fetch_all`, `generate_for_record`, `vacancy_id_from_url`, `parse_level`, `match_reason`, `format_salary`.
-- Internal helpers prefixed with `_`: `_post_negotiation`, `_negotiation_error`, `_set_status`, `_is_auth_error`, `_work_format`, `_sheets_url`, `_send`, `_add_search_responses` (test helper), `_mock_full_run` (test helper), `_vac` / `_rec` (test fixture builders).
-- Public entry points are the unprefixed names: `apply_one`, `apply_batch`, `select_candidates`, `enrich_new`, `fetch_all`, `generate_all`, `generate_for_record`, `merge`, `load`, `save`, `run` (orchestrator).
+- snake_case: `apply_one`, `fetch_all`, `enrich_new`, `build_prompts`, `generate_for_record`, `select_candidates`, `vacancy_id_from_url`, `format_salary`, `parse_level`, `match_reason`, `record_to_row`, `build_rows`.
+- Private helpers prefixed `_`: `_post_negotiation` (`hh-ai-vacancies/src/apply.py:21`), `_negotiation_error` (`src/apply.py:32`), `_set_status` (`src/apply.py:41`), `_is_auth_error` (`src/auth.py:68`), `_work_format` (`src/enrich.py:18`), `_send` (`src/telegram.py:12`), `_sheets_url` (`src/sheets_export.py:52`), `_rec`/`_vac` test helpers.
+- Boolean predicates: `is_active`, `is_relevant` (`src/fetch.py:37,41`), `letter_ok` (`src/cover.py:125`), `dry_run` (`src/config.py:41`).
 
 **Variables:**
-- `snake_case` for locals: `new_ids`, `found_total`, `seen_ids`, `retry_after`, `tokens_path`.
-- Single-letter loop counters `i`, `n` are acceptable.
-- Module-level dicts keyed by id: `store` / `vac` / `store_dict` (the `vacancies.json` object keyed by `vacancy_id`); records are `rec`.
-
-**Constants:**
-- `UPPER_SNAKE_CASE` at module top: `JUNK_RE`, `ARCHIVE_RE`, `RESUME_RE`, `VACANCY_ID_RE`, `PLACEHOLDER_RE`, `TAG_RE`, `MAX_RETRIES_429`, `NEGOTIATIONS_URL`, `TOKEN_URL`, `CLOSING`, `COLUMNS`, `COVER_LETTER_MAX_TOKENS`, `COVER_LETTER_TEMP`, `COVER_LETTER_WORKERS`, `KEYWORDS`, `STATUS_SENT`, `STATUS_NOT_SENT`, `STATUS_TEST`, `VALID_STATUSES`, `LEGACY_SEEN_PATH`, `HH_API`, `HH_USER_AGENT`, `SPREADSHEET_ID`, `SHEET_GID`, `SHEET_NAME`, `SHEET_URL`.
-- Regex patterns use the `_RE` suffix and are `re.compile`-d at module load (not inline).
+- snake_case: `found_total`, `new_ids`, `seen_ids`, `candidate_ids`, `apply_metrics`.
+- Module-level constants SCREAMING_SNAKE_CASE: `KEYWORDS`, `JUNK_RE`, `RESUME_RE`, `ARCHIVE_RE`, `SCHEMA`, `NEGOTIATIONS_URL`, `TOKEN_URL`, `MAX_RETRIES_429`, `COVER_LETTER_MAX_TOKENS`, `COVER_LETTER_WORKERS`, `RESUME`, `CLOSING`, `PLACEHOLDER_RE`, `COLUMNS`, `SPREADSHEET_ID`, `SHEET_GID`, `SHEET_NAME`, `SHEET_URL`, `HH_API`, `HH_USER_AGENT`, `STATUS_SENT`, `STATUS_NOT_SENT`, `STATUS_TEST`, `VALID_STATUSES`, `LEGACY_SEEN_PATH`, `TOKENS` (test fixture data in `tests/conftest.py:78`).
+- Env-derived runtime values are accessed via accessor functions, not bare constants: `dry_run()`, `apply_limit()`, `resume_id()`, `ollama_api_key()`, `telegram_bot_token()`, `telegram_chat_id()`, `data_dir()`, `vacancies_path()`, `tokens_path()`, `run_report_path()` (all in `hh-ai-vacancies/src/config.py`). Follow this pattern for any new env-overridable setting so `HH_PIPELINE_HOME` / test monkeypatching works.
 
 **Types:**
-- No type hints anywhere in `src/`. Do not add them piecemeal — the codebase is intentionally hint-free for brevity.
-- The `SCHEMA` dict in `src/store.py` is the de-facto type spec: `{field: (python_type, required_bool)}`. `validate_record()` enforces it.
-- Domain status values are Russian string constants (`"отправлено"` / `"не отправлено"` / `"тест"`) — never inline string literals; reference `config.STATUS_*`.
+- No type hints anywhere in the codebase. Do not add them to match style — parameters and returns are documented in docstrings only.
+- Schema declared as a dict literal: `SCHEMA` in `hh-ai-vacancies/src/store.py:12` maps field -> `(type, required)` tuple; `validate_record` (`src/store.py:67`) enforces it.
+- Custom exceptions: `BatchStop` (`src/apply.py:14`, carries `.reason`), `AuthError` (`src/auth.py:13`), `NetworkError` (`src/http_client.py:27`). Subclass `Exception` directly; no shared base class.
 
-## Module Structure
+## Code Style
 
-Every `src/` module follows this layout (see `src/apply.py`, `src/enrich.py`, `src/cover.py`):
+**Formatting:**
+- No formatter config (no `.flake8`, `pyproject.toml`, `setup.cfg`, `ruff.toml`, `.pre-commit-config.yaml` present). Style is enforced by review and pattern-matching.
+- 4-space indentation; UTF-8 source; line lengths stay well under 100 generally but there is no hard limit.
+- Strings: double quotes (`"..."`) for module docstrings and most literals; single quotes for `re.compile` raw strings (`r"\b(...)\b"`) and short inline literals. Prefer double quotes for new code.
 
-1. **Module docstring** — triple-quoted, first line gives the pipeline step number and purpose, often in Russian. Example: `"""Step 6: POST /negotiations. Статусы: отправлено | не отправлено | тест."""`
-2. **Stdlib imports** (alphabetical): `import json`, `import os`, `import re`, `import sys`, `import time`, `import urllib.parse`.
-3. **Relative imports** — `from . import auth, config, http_client, telegram` or `from .store import now_iso`. Relative only; never `import src.X` inside the package.
-4. **Module-level constants** (regex, URLs, limits).
-5. **Exception classes** if any (`class BatchStop(Exception)`, `class AuthError(Exception)`, `class NetworkError(Exception)`).
-6. **Private `_helpers`**.
-7. **Public functions**.
-8. **No `if __name__ == "__main__"` in stage modules** — only `src/pipeline.py` and standalone scripts/evals have it.
+**Linting:**
+- None configured. `# noqa: E402` markers appear after `sys.path.insert` in `tests/conftest.py:8`, `evals/check_metrics.py:19`, `evals/rate_cover_letters.py:13` — replicate this when a module must manipulate `sys.path` before its first import.
 
-`src/pipeline.py:run()` is the single orchestrator entry point; it returns an exit code (`0`/`2`/`3`) and `sys.exit(run())` is in the `__main__` block.
+**Shebangs:**
+- `#!/usr/bin/env python3` on executables only: `evals/check_metrics.py:1`, `evals/rate_cover_letters.py:1`, `scripts/hh_token_updater.py`, `scripts/hh_ai_vacancies.py`. Library modules in `src/` have no shebang.
+
+## Module Layout
+
+Every `src/` module follows this structure (see `hh-ai-vacancies/src/apply.py` as the canonical example):
+
+1. **Module docstring** — first line names the pipeline step and its purpose, often referencing the test-case ID and `docs/api-contract.md` section. Examples:
+   - `src/apply.py:1`: `"""Step 6: POST /negotiations. Статусы: отправлено | не отправлено | тест. Полный маппинг ошибок — docs/api-contract.md §1."""`
+   - `src/fetch.py:1`: `"""Step 2: GET /vacancies по 13 AI-ключам + фильтры junk/archive/relevance."""`
+   - `src/store.py:1`: `"""data/vacancies.json — единый source of truth. Ключ: vacancy_id. Sheets НИКОГДА не читается — только пишется (sheets_export)."""`
+2. stdlib imports.
+3. intra-package imports (`from . import auth, config, http_client, telegram` — **relative**, not `from src.`).
+4. Module-level constants (SCREAMING_SNAKE) and compiled regexes.
+5. Custom exception classes (if any).
+6. Private helpers (`_`-prefixed).
+7. Public functions.
+8. No `if __name__ == "__main__"` in `src/` modules except `src/pipeline.py:108` (`sys.exit(run())`).
+
+Docstrings are written in Russian (project context is HH.ru, a Russian job board). Code identifiers stay English/Russian-mixed as needed (`STATUS_SENT = "отправлено"`). New modules should keep docstrings in Russian to match.
 
 ## Import Organization
 
-**Order (observed in every `src/` file):**
-1. stdlib (`json`, `os`, `re`, `sys`, `time`, `urllib.parse`, `concurrent.futures`)
-2. blank line
-3. relative package imports (`from . import auth, config, http_client, telegram`)
-4. blank line
-5. (in tests/evals) `from tests.conftest import TOKENS, make_resp, search_item` etc., guarded by `# noqa: E402` when a `sys.path.insert` precedes it.
+**Order:**
+1. stdlib (`json`, `os`, `re`, `sys`, `time`, `urllib.parse`, `urllib.request`, `urllib.error`, `shutil`, `datetime`, `concurrent.futures`).
+2. intra-package relative imports (`from . import auth, config, http_client, telegram`).
+3. intra-package named imports (`from .store import now_iso`, `from .fetch import format_salary`).
+4. Test/eval imports: `import pytest` then `from src import ...` then `from tests.conftest import TOKENS, make_resp, search_item, vacancy_details` — see `hh-ai-vacancies/tests/test_apply.py:1-8`.
 
-**Path manipulation:** tests and evals insert the repo root with
-`sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))`
-before importing `src`. Mark the following import with `# noqa: E402`.
+**Path manipulation:**
+- `tests/conftest.py:7` and eval entrypoints insert the repo root onto `sys.path` before importing `src`:
+  ```python
+  sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+  from src import http_client  # noqa: E402
+  ```
+  `src/` itself uses **relative imports** (`from . import ...`) so it also works as `python3 -m src.pipeline`.
 
-**No path aliases** (no `pyproject.toml`, no `PYTHONPATH` config). Always import as `from src import X` from outside the package and `from . import X` inside it.
-
-## Single HTTP Entry Point
-
-**Every HTTP call goes through `src/http_client.request(method, url, headers=..., data=..., timeout=...)`** (`src/http_client.py`). It returns an `HttpResponse` for any HTTP status (4xx/5xx do NOT raise); only DNS/timeout/connection failures raise `http_client.NetworkError`.
-
-If you add a module that makes HTTP calls, route them through `http_client.request` or they will bypass the test mock harness (`tests/conftest.py:MockHttp` monkeypatches `http_client.request`).
-
-HH API calls go one layer higher through `auth.api_request(method, url, tokens, data=..., headers=..., tokens_path=...)` (`src/auth.py`), which attaches `Authorization: Bearer ...` + `User-Agent` and handles the 403-oauth refresh-once loop. Use `api_request` for HH endpoints, raw `http_client.request` for Telegram/Google/Ollama.
-
-**Mandatory header:** `User-Agent: config.HH_USER_AGENT` on every HH request or HH returns `400 bad_user_agent`.
+**Path Aliases:**
+- None. No package alias, no `pyproject.toml` `[tool.setuptools]` config. `src/` is a plain package (`src/__init__.py` is empty).
 
 ## Error Handling
 
-**Strategy:** return `HttpResponse` for HTTP statuses (no raise on 4xx/5xx); raise domain exceptions for business halts; let `pipeline.run()` catch at stage boundaries.
-
-**Domain exceptions** (each in its own module):
-- `src/http_client.py:NetworkError` — DNS/timeout/connection. Means "API down".
-- `src/auth.py:AuthError` — token load/refresh failure. Fatal → exit 2 + Telegram alert.
-- `src/apply.py:BatchStop(reason)` — halts the apply batch, defers remaining candidates to next run. `reason` is one of: `api_down`, `limit_exceeded`, `resume_not_found`, `captcha`. Carries `.reason` attribute.
+**Strategy:** explicit status fields + typed exceptions; HTTP never raises on 4xx/5xx.
 
 **Patterns:**
-- Stage-level try/except in `src/pipeline.py:run()` — catch `auth.AuthError` → `store.save(vac)` then `return 2`; catch `RuntimeError` (fetch all-keywords-down) → Telegram alert + `return 3`; catch bare `Exception` around `sheets_export.export` → log to stderr, alert, set `sheets_rows = -1` (non-fatal — Sheets is visualization-only).
-- Retry loop with attempt counter: `apply_one` retries 429 up to `MAX_RETRIES_429` (3), backoff from `Retry-After` header or exponential `5 * 2**(retries-1)`.
-- Refresh-once: `auth.api_request` retries exactly once after a successful token refresh (the `_retried` flag param); a second 403-oauth is fatal.
-- `_set_status(rec, status, reason="")` is the single mutator for record status — always sets `status`, `status_reason`, `updated_at`, and conditionally `applied_at`. Use it instead of assigning fields directly.
-- `store.validate_record(rec)` returns a list of problem strings (`"missing:status"`, `"type:field"`, `"bad_status:..."`); empty list = valid. Tests assert `== []` for valid records.
-- `cover.letter_ok(text)` returns bool (400–1500 chars, no placeholders/HTML) — gate fallback letters through it.
+- `http_client.request()` (`hh-ai-vacancies/src/http_client.py:31`) returns an `HttpResponse` for **any** HTTP status (4xx/5xx included). Only DNS/timeout/connection failures raise `NetworkError`. Never raise on a non-2xx HTTP status — inspect `resp.status` and `resp.json()`.
+- Records carry `status` + `status_reason` rather than throwing. `apply.py:_set_status` (`src/apply.py:41`) is the canonical mutation: sets `status`, `status_reason`, `updated_at`, and `applied_at` (only on `STATUS_SENT` and not `already_applied`).
+- `BatchStop` (`src/apply.py:14`) halts a batch and defers remaining records with `status_reason = f"deferred_{reason}"` (`src/apply.py:133`). Always re-raise `AuthError`; always catch `BatchStop` in the batch loop.
+- `apply_one` (`src/apply.py:49`) maps every HH error code to a status: `test_required` → `STATUS_TEST`, `already_applied` → `STATUS_SENT`/`already_applied`, `limit_exceeded`/`resume_not_found`/`captcha_required`/5xx → `STATUS_NOT_SENT` + `BatchStop`, 429 → backoff then retry then `rate_limited`.
+- Auth refresh-once: `auth.api_request` (`src/auth.py:75`) auto-refreshes the OAuth token on `403 oauth` exactly once (`_retried` flag); second `403 oauth` → `AuthError` + Telegram alert. Always thread `tokens` through return values (`resp, tokens`) so refreshed tokens propagate.
+- Atomic file writes for tokens and store: write to `path + ".tmp"`, then `os.replace(tmp, path)` — see `auth.save_tokens` (`src/auth.py:25`) and `store.save` (`src/store.py:95`). `store.save` also backs up the previous file to `path + ".bak"` first (`src/store.py:100`). Follow this temp+rename pattern for any new persisted state — `refresh_token` is single-use, losing the pair means re-running OAuth.
+- Pipeline-level exit codes in `hh-ai-vacancies/src/pipeline.py:run()`: `0` success, `2` auth/config fatal, `3` fetch fatal. Always `store.save(vac)` before returning on a mid-stage failure (`src/pipeline.py:55,67,72,75`).
+- Telegram alerts via `telegram.send_alert` on every fatal condition; wrap dynamic content with `telegram.esc` (= `html.escape(..., quote=False)`, `src/telegram.py:8`).
 
-**Anti-pattern to avoid:** do not raise on 4xx/5xx HTTP statuses. `http_client.request` deliberately returns `HttpResponse` for them so the caller can branch on `resp.status`. Raise `NetworkError` only for transport failures.
+**Never print secrets.** Replace with `[REDACTED]` in reports/logs/alerts (CLAUDE.md rule).
 
-## Atomic File Writes
+## Logging
 
-Files that lose data on crash use the **temp + `os.replace`** pattern:
-- `src/store.py:save()` — also copies the previous version to `path + ".bak"` first (`shutil.copy2`).
-- `src/auth.py:save_tokens()` — temp + `os.replace` (refresh_token is single-use; losing the pair means re-running OAuth).
+**Framework:** none — `print(..., file=sys.stderr)` for diagnostics, `print(...)` to stdout for the Hermes cron dispatcher (see `telegram._send` `src/telegram.py:14` which prints the report to stdout before POSTing).
 
-New atomic writes must follow the same shape:
-```python
-tmp = path + ".tmp"
-with open(tmp, "w", encoding="utf-8") as fh:
-    json.dump(obj, fh, ensure_ascii=False, indent=2)
-os.replace(tmp, path)
-```
+**Patterns:**
+- Stage progress lines: `print(f"[pipeline] start (DRY_RUN={dry})", file=sys.stderr)` (`src/pipeline.py:21`), `print(f"[fetch] '{kw}' HTTP {resp.status}", file=sys.stderr)` (`src/fetch.py:103`), `print(f"[enrich] {rec['vacancy_id']} HTTP {resp.status}", file=sys.stderr)` (`src/enrich.py:34`), `print(f"[cover] ollama HTTP {resp.status}", file=sys.stderr)` (`src/cover.py:90`), `print(f"[apply] batch stopped: {e.reason}", file=sys.stderr)` (`src/apply.py:129`).
+- Tag prefix in square brackets identifies the stage: `[pipeline]`, `[fetch]`, `[enrich]`, `[cover]`, `[apply]`. Replicate this for new stages.
+- Only `telegram._send` writes to stdout (the report payload). Everything else goes to stderr.
 
-Always pass `ensure_ascii=False, indent=2` to `json.dump` — the data is Russian and must be human-readable in the file.
+## Comments
 
-## Logging & Output
+**When to Comment:**
+- Russian inline comments for non-obvious business rules: `src/store.py:96` `# бэкап = предыдущая версия`, `src/apply.py:131` `# остальные — «не отправлено», перенос на следующий прогон`, `src/pipeline.py:74` `# persist source of truth ДО экспорта`, `src/enrich.py:55` `# Вакансия ушла в архив между fetch и enrich`.
+- English comments only for `# noqa` markers.
+- No block comments; use inline `#` on their own line above the code they explain.
 
-**`print(text)` to stdout** is reserved for the Hermes `deliver: origin` channel — `telegram._send` prints the full report/alert to stdout so the cron host can forward it to Telegram. Do not print debug noise to stdout.
-
-**`print(msg, file=sys.stderr)`** is the logging channel. Convention: prefix with the module/stage tag — `[pipeline]`, `[fetch]`, `[enrich]`, `[cover]`, `[apply]`. Examples in `src/pipeline.py`, `src/fetch.py:103`, `src/enrich.py:34`, `src/apply.py:129`.
-
-**No logging framework.** No `logging` module usage. stderr print + Telegram alerts (for fatal) is the whole observability story.
-
-**Secrets:** never print tokens, passwords, or `Authorization` headers. Replace with `[REDACTED]`. The `Authorization` header is set from `tokens["access_token"]` in `auth.api_request` and never logged.
-
-## Telegram / HTML
-
-**Telegram messages always use `parse_mode=HTML`** (`src/telegram.py`). Dynamic content must be escaped with `telegram.esc()` (which wraps `html.escape(text, quote=False)`). Never use Markdown — the dispatcher does not set `parse_mode=Markdown` and `[text](url)` / `**bold**` render as raw text (documented incident in `CLAUDE.md`).
-
-Job titles in reports must be clickable `<a href="vacancy_url">` links. Use emoji prefixes for visual scan: `🔍 Найдено`, `🆕 Новых`, `✉️ Cover letters`, `🚀 Отправлено`, `📝 С тестами`, `🔗 <a href>Открыть таблицу</a>`.
-
-Alerts (sent via `telegram.send_alert`) are prefixed with `🚨` (fatal) or `⚠️` (warning).
-
-## Comments & Docstrings
-
-**Module docstrings:** every `src/` module has a triple-quoted docstring as the first statement, giving the step number and a one-line purpose. Mix of Russian and English is normal — Russian for business/domain descriptions (`src/store.py`, `src/apply.py`), English for generic mechanics (`src/http_client.py`).
-
-**Function docstrings:** short, present on public entry points. Russian imperative: `"""Returns tokens. Sets rec status. Raises BatchStop when batch must halt."""` (`src/apply.py:apply_one`). English for helpers.
-
-**Inline comments:** sparse, only for non-obvious business rules. Examples: `# остальные — «не отправлено», перенос на следующий прогон` (`src/apply.py:131`), `# мигрированный не попадает в кандидаты на отклик` (`tests/test_pipeline_e2e.py:89`). No section dividers in `src/` (the monolith `scripts/hh_ai_vacancies.py` uses `# ---` banner comments; do not copy that style into `src/`).
-
-**No JSDoc/TSDoc** (Python project). No type annotations.
+**JSDoc/TSDoc:**
+- N/A (Python). Use triple-quoted module docstrings and function docstrings in Russian, terse (1-3 lines). Examples: `src/store.py:107-110` (`merge`), `src/apply.py:49-50` (`apply_one`), `src/store.py:67-68` (`validate_record`).
 
 ## Function Design
 
-**Size:** most `src/` functions are 10–40 lines. The largest is `apply_one` (~50 lines) because of the error-status branch table — that's the ceiling; split anything bigger.
+**Size:** Small, single-purpose. Most functions 5-30 lines; the largest (`pipeline.run` at `src/pipeline.py:19-105`, `apply.apply_one` at `src/apply.py:49-101`, `apply.apply_batch` at `src/apply.py:104-143`) stay under ~60 lines. If a function grows past that, extract helpers (see how `apply_one` delegates to `_post_negotiation`/`_negotiation_error`/`_set_status`).
 
-**Parameters:** public functions take the data they operate on as the first arg (`store_dict`, `rec`, `candidate_ids`) plus a `tokens` and optional `tokens_path=None` for anything that calls HH. Optional knobs come last with defaults: `dry_run=None`, `limit=None`, `pause=None` — resolved from `config.*` inside the function when `None`.
+**Parameters:** Use `**kw` for record builders that accept many optional fields — `store.new_record(vacancy_id, url, title, **kw)` (`src/store.py:49`) and `tests/conftest.py:search_item(vid, name, **kw)`, `vacancy_details(vid, **kw)`. Default `None` means "fall back to config": `apply_batch(..., dry_run=None, limit=None, pause=None)` resolves via `config.dry_run() if dry_run is None else dry_run` (`src/apply.py:108-110`). Replicate this pattern so callers can override per-call while the default still reads env.
 
-**Return values:**
-- Functions that call HH return `(resp, tokens)` tuples (tokens may be refreshed mid-call) — `auth.api_request`, `_post_negotiation`, `fetch_all`, `enrich_record`, `enrich_new`.
-- `apply_batch` returns `(metrics_dict, tokens)`.
-- `pipeline.run()` returns an exit code int (`0`/`2`/`3`).
-- `store.merge` returns `list[new_vacancy_ids]`; `store.duplicates` returns `list[keys]`; `store.validate_record` returns `list[str]` (empty = valid).
-- `cover.letter_ok` returns `bool`; `sheets_export.export` returns row count or raises `RuntimeError`.
-
-**Mutators:** `enrich_record`, `apply_one`, `_set_status`, `generate_for_record`, `merge` mutate the `rec`/`store_dict` in place AND return a value. Document this in the docstring ("Mutates rec in place. Returns (ok, tokens).").
+**Return Values:**
+- HTTP-calling functions return `(result, tokens)` tuples so refreshed tokens propagate: `auth.api_request` → `(resp, tokens)`, `enrich_record` → `(ok, tokens)`, `apply_one` → `tokens`, `apply_batch` → `(metrics, tokens)`, `fetch_all` → `(records, found_total, tokens)`.
+- Status-bearing functions mutate the record in place AND return a small value: `enrich_record(rec, tokens)` mutates `rec` and returns `(ok, tokens)`; `apply_one(rec, ...)` mutates `rec` and returns `tokens`.
+- `store.save` / `auth.save_tokens` return `None`. `cover.generate_for_record` returns the letter string.
 
 ## Module Design
 
-**Exports:** no `__all__` anywhere. Public names are simply the non-underscore ones. `src/__init__.py` is empty — import submodules explicitly (`from src import apply`, not `from src import *`).
+**Exports:** No `__all__` declarations anywhere. Public = not `_`-prefixed. Modules expose their full public surface implicitly.
 
-**Barrel files:** none. Import directly from the module that owns the symbol.
+**Barrel Files:**
+- `src/__init__.py` is empty (0 lines) — `src` is a namespace package, not a re-export hub.
+- `tests/__init__.py`, `evals/__init__.py` likewise empty.
 
-**One concern per module:** `src/apply.py` only does apply/negotiations; `src/cover.py` only does cover-letter generation; `src/store.py` only does persistence + schema. Do not add cross-stage logic to a stage module — put orchestration in `src/pipeline.py`.
+## Concurrency
 
-**Config access:** read env vars through `src/config.py` accessors — `config.dry_run()`, `config.apply_limit()`, `config.resume_id()`, `config.ollama_api_key()`, `config.telegram_bot_token()`, `config.telegram_chat_id()`. Static values are module constants (`config.HH_API`, `config.HH_USER_AGENT`, `config.SPREADSHEET_ID`). Never call `os.environ.get` directly in a stage module — add an accessor to `config.py` instead.
+- Cover-letter generation uses `concurrent.futures.ThreadPoolExecutor` with `as_completed` (`hh-ai-vacancies/src/cover.py:146-155`), capped at `min(COVER_LETTER_WORKERS, len(new_ids))`. Threads are acceptable because work is I/O-bound (Ollama HTTP).
+- The rest of the pipeline is sequential. Do not introduce threads/async elsewhere without a measured bottleneck; `apply_batch` deliberately serializes with `APPLY_PAUSE_SEC` sleep between posts (`src/apply.py:124`).
 
-**Test isolation knob:** `HH_PIPELINE_HOME` env var (read in `config.py`) overrides the `data/` directory root. All new path-bearing config must honor it.
+## Security Conventions
 
-## Parallelism
+- `User-Agent` header is mandatory on all HH requests (`config.HH_USER_AGENT`, `src/config.py:50`) — HH returns `400 bad_user_agent` without it. `auth.api_request` sets it on every call (`src/auth.py:78`).
+- Telegram `parse_mode=HTML` always (`src/telegram.py:21`). Escape all dynamic content with `telegram.esc` before embedding — Markdown is forbidden (see `references/telegram-html-vs-markdownv2.md`).
+- Secrets never printed; redact with `[REDACTED]`. Env loaded from `~/.hermes/.env` via `config.load_env_file` (`src/config.py:5`) which never overwrites existing env vars.
+- `data/hh_tokens.json` written atomically (temp + rename) because `refresh_token` is single-use.
 
-Use `concurrent.futures.ThreadPoolExecutor` with `as_completed` for I/O-bound fan-out. Pattern (from `src/cover.py:generate_all`):
-```python
-workers = max(1, min(config.COVER_LETTER_WORKERS, len(new_ids)))
-with ThreadPoolExecutor(max_workers=workers) as exe:
-    futures = {exe.submit(fn, arg): key for key in args}
-    for fut in as_completed(futures):
-        fut.result()
-```
-Cap workers to the task count (`min(...)`) to avoid idle threads.
+## Test-Case IDs
+
+Tests and module docstrings reference test-case IDs (`TC-01` through `TC-14`) that map to the goal criteria in `evals/check_metrics.py` and `docs/`. Examples:
+- `tests/test_pipeline_e2e.py:1` `"""TC-01, TC-04, TC-06, TC-12, evals: e2e DRY_RUN..."""`
+- `tests/test_apply.py:1` `"""TC-10, TC-11, TC-12..."""`
+- `tests/test_auth.py:1` `"""TC-02, TC-03..."""`
+- `tests/test_store.py:1` `"""TC-04, TC-06, TC-07..."""`
+- `tests/test_cover.py:1` `"""TC-09..."""`
+- `tests/test_fetch_enrich.py:1` `"""...TC-08 enrichment."""`
+- `tests/test_sheets_telegram.py:1` `"""TC-05, TC-13, TC-14."""`
+
+When adding a test, tag the docstring with the relevant TC ID. When adding a stage, add TC IDs to `evals/check_metrics.py` criteria.
 
 ---
 

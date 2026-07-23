@@ -5,251 +5,288 @@
 
 ## System Overview
 
-Autonomous cron pipeline that scrapes AI/PM vacancies from the HeadHunter API, persists them in a JSON store, generates cover letters via Ollama Cloud, auto-responds to selected vacancies via HH `/negotiations`, mirrors state to a Google Sheet, and reports to Telegram. Runs on a Hermes Agent cron host. Two coexisting code paths: an old monolith scraper (`scripts/hh_ai_vacancies.py`) and the new modular `src/` pipeline invoked as `python3 -m src.pipeline`.
-
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                   Hermes Cron Host (trigger)                │
-│   `config/cron.yaml` → `python3 -m src.pipeline`            │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Orchestrator  `src/pipeline.py:run()`                       │
-│  (8 sequential stages, exit 0/2/3, writes last_run_report)   │
-└──┬───────┬───────┬───────┬───────┬───────┬───────┬──────────┘
-   │ 1     │ 2     │ 3     │ 4     │ 5     │ 6     │ 7/8
-   ▼       ▼       ▼       ▼       ▼       ▼       ▼
-┌────────┐┌────────┐┌────────┐┌────────┐┌────────┐┌────────┐┌────────────┐
-│ auth   ││ fetch  ││ store  ││ enrich ││ cover  ││ apply  ││ sheets_exp. │
-│`auth.py`││`fetch.py`││`store.py`││`enrich.py`││`cover.py`││`apply.py`││`telegram.py`│
-└───┬────┘└───┬────┘└───┬────┘└───┬────┘└───┬────┘└───┬────┘└─────┬──────┘
-    │        │          │          │          │         │           │
-    └────────┴──────────┴──────────┴──────────┴─────────┘           │
-                  all HH/HTTP via single entrypoint                   │
-                     `src/http_client.py:request()`                   │
-                                                                      │
-                                                                      ▼
-                  ┌────────────────────────────────────────────────────────┐
-   External      │ HH API (api.hh.ru) │ Ollama Cloud │ Google Sheets API    │
-                  │ Telegram Bot API  │ Google OAuth2 (token refresh)      │
-                  └────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-                  ┌────────────────────────────────────────────────────────┐
-   State          │ `data/vacancies.json` (source of truth, keyed by id)     │
-   (local files)  │ `data/hh_tokens.json` (user OAuth, atomic save)           │
-                  │ `data/last_run_report.json` (evals input)                 │
-                  │ `~/.hermes/.env`, `~/.config/gws/credentials.json`       │
-                  └────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         Trigger / Entry Layer                         │
+│   Hermes cron (config/cron.yaml)  →  `python3 -m src.pipeline`       │
+│   Legacy: scripts/hh_ai_vacancies.py (monolith, cron 99a55e0f5ac4)    │
+└──────────────────────────────┬───────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Orchestrator                                       │
+│   `hh-ai-vacancies/src/pipeline.py:run()`  (8-stage linear flow)      │
+└──────────────────────────────┬───────────────────────────────────────┘
+                               │
+   ┌──────────┬──────────┬──────┴───────┬───────────┬───────────┬──────┐
+   ▼          ▼          ▼              ▼           ▼           ▼       ▼
+┌──────┐  ┌──────┐   ┌──────┐       ┌──────┐    ┌──────┐   ┌─────────┐ ┌──────┐
+│auth  │  │fetch │   │store │       │enrich│    │cover │   │apply    │ │telegram│
+│`auth │  │`fetch│   │`store│       │`enrich│   │`cover│   │`apply   │ │`telegram│
+│.py`  │  │.py`  │   │.py`  │       │.py`  │    │.py`  │   │.py`     │ │.py`    │
+└──┬───┘  └──┬───┘  └──┬───┘      └──┬───┘  └──┬───┘   └────┬────┘ └────────┘
+   │         │         │             │         │            │
+   └─────────┴─────────┴─────────────┴─────────┴────────────┘
+                               │
+                               ▼
+                  ┌─────────────────────────┐
+                  │ Single HTTP entrypoint  │
+                  │ `hh-ai-vacancies/src/  │
+                  │     http_client.py`    │
+                  └────────────┬──────────┘
+                               │
+   ┌───────────────────────────┼──────────────────────────────┐
+   ▼                           ▼                              ▼
+┌──────────┐          ┌─────────────────┐            ┌────────────────┐
+│HH.ru API │          │ Ollama Cloud     │            │ Google Sheets  │
+│api.hh.ru │          │ ollama.com/v1    │            │ (visualization │
+│/vacancies│          │ /chat/completions│            │  only — write) │
+│/negotiations        │                 │            │                │
+│/token     │          └─────────────────┘            └────────────────┘
+└──────────┘
+                               │
+                               ▼
+                  ┌─────────────────────────┐
+                  │ Source of truth          │
+                  │ `data/vacancies.json`    │
+                  │ + `data/hh_tokens.json`   │
+                  │ + `data/last_run_report. │
+                  │        json`             │
+                  └─────────────────────────┘
+                               │
+                               ▼
+                  ┌─────────────────────────┐
+                  │ Telegram Bot API        │
+                  │ api.telegram.org/bot... │
+                  │ (alerts + report, HTML) │
+                  └─────────────────────────┘
 ```
 
 ## Component Responsibilities
 
 | Component | Responsibility | File |
 |-----------|----------------|------|
-| Orchestrator | Run 8 stages in order, write metrics, return exit code | `src/pipeline.py` |
-| Auth | Load/refresh HH user OAuth tokens, one retry on 403 oauth | `src/auth.py` |
-| Config | Env loading, path resolution (`HH_PIPELINE_HOME`), constants (keywords, regexes, statuses) | `src/config.py` |
-| HTTP entrypoint | Single `urllib` wrapper returning `HttpResponse` for any status; raises `NetworkError` on connection failure | `src/http_client.py` |
-| Fetch | `GET /vacancies` across `KEYWORDS`, apply junk/archive/relevance filters, classify level/match | `src/fetch.py` |
-| Store | Source-of-truth `vacancies.json`: schema validation, atomic save with `.bak`, merge/dedup, legacy migration | `src/store.py` |
-| Enrich | `GET /vacancies/{id}` full details on new IDs only | `src/enrich.py` |
-| Cover | Ollama Cloud cover letters (parallelized), deterministic fallback, validation | `src/cover.py` |
-| Apply | `POST /negotiations` with status mapping, rate-limit backoff, batch stop conditions | `src/apply.py` |
-| Sheets export | Full clear+rewrite of `HH_AI` tab from `vacancies.json` (visualization only) | `src/sheets_export.py` |
-| Telegram | `send_report`/`send_alert` with `parse_mode=HTML`; `_send` also prints to stdout (Hermes deliver: origin) | `src/telegram.py` |
-| Eval — metrics | Deterministic goal check from `vacancies.json` + `last_run_report.json` | `evals/check_metrics.py` |
-| Eval — rubric | Independent Ollama judge scoring cover letters (threshold ≥7/10) | `evals/rate_cover_letters.py` |
-| Migration | One-shot legacy `seen.json` → `vacancies.json` | `scripts/migrate_seen.py` |
-| Old monolith | Reference scraper (search → Sheets → Telegram only); uses app token | `scripts/hh_ai_vacancies.py` |
-| Token updater | Playwright-based HH OAuth refresh for the old app-token scraper | `scripts/hh_token_updater.py` |
+| Orchestrator | 8-stage linear pipeline; writes `last_run_report.json`; exit codes 0/2/3 | `hh-ai-vacancies/src/pipeline.py` |
+| Config / env | Loads `~/.hermes/.env`, path helpers, keywords, regex filters, statuses | `hh-ai-vacancies/src/config.py` |
+| HTTP client | Single `request()` entrypoint over `urllib`; `HttpResponse` + `NetworkError`; every module routes HTTP here | `hh-ai-vacancies/src/http_client.py` |
+| Auth | User OAuth token load/save (atomic), refresh-on-403-once, `AuthError` + Telegram alert | `hh-ai-vacancies/src/auth.py` |
+| Fetch | `GET /vacancies` over 13 keywords; junk/archive/resume/relevance filters; `parse_level`, `match_reason` | `hh-ai-vacancies/src/fetch.py` |
+| Store | `data/vacancies.json` source of truth, schema/validate, atomic save with `.bak`, merge/duplicates, legacy migration | `hh-ai-vacancies/src/store.py` |
+| Enrich | `GET /vacancies/{id}` full details; strips HTML, truncates description to 4000 chars, detects archive-flip | `hh-ai-vacancies/src/enrich.py` |
+| Cover | Ollama Cloud cover letters (parallel `ThreadPoolExecutor`), deterministic fallback template, `letter_ok` validation | `hh-ai-vacancies/src/cover.py` |
+| Apply | `POST /negotiations`; status machine (отправлено/не отправлено/тест); `BatchStop` on fatal errors; 429 backoff | `hh-ai-vacancies/src/apply.py` |
+| Sheets export | Full-rewrite of `HH_AI` tab each run; clear + batched PUT (200 rows); visualization only — never reads back | `hh-ai-vacancies/src/sheets_export.py` |
+| Telegram | `send_report` + `send_alert`; `parse_mode=HTML`; `esc()` helper; also prints to stdout (Hermes deliver: origin) | `hh-ai-vacancies/src/telegram.py` |
+| Goal check | Deterministic post-run verifier (exit 0 = goal reached); reads JSON + report | `hh-ai-vacancies/evals/check_metrics.py` |
+| Cover letter rubric | Independent Ollama call, LLM rubric (threshold ≥7/10) | `hh-ai-vacancies/evals/rate_cover_letters.py` |
+| Legacy monolith | Original 900-line standalone scraper (search → Sheets → Telegram only); reference impl, cron `99a55e0f5ac4` | `hh-ai-vacancies/scripts/hh_ai_vacancies.py` |
+| Token updater | Playwright-based HH app-token renewal (OTP technique) | `hh-ai-vacancies/scripts/hh_token_updater.py` |
+| Seen migration | One-shot legacy `seen.json` → `vacancies.json` | `hh-ai-vacancies/scripts/migrate_seen.py` |
 
 ## Pattern Overview
 
-**Overall:** Sequential single-process pipeline with functional stage modules; module-level shared state limited to in-memory `store` dict passed by reference through `run()`.
+**Overall:** Linear staged pipeline with a single orchestrator and a single HTTP entrypoint.
 
 **Key Characteristics:**
-- Stdlib-only HTTP via single `http_client.request` — no `requests`/third-party deps. Every module routes HTTP through it so tests can monkeypatch one symbol.
-- Store-as-source-of-truth: `data/vacancies.json` is canonical; Sheets is write-only visualization; no module reads cell data back.
-- Atomic file writes (temp + `os.replace`) for `vacancies.json` and `hh_tokens.json` because the HH `refresh_token` is single-use and losing the pair means re-running OAuth.
-- Defensive fallbacks: cover letters fall back to a deterministic template if Ollama fails; Sheets/Telegram failures degrade to alerts without halting the pipeline.
-- DRY_RUN defaults to `1` (safe — no real applies); live runs require explicit `DRY_RUN=0`.
+- **Linear 8-stage flow** in `pipeline.py:run()` — auth → fetch → merge/dedup → enrich → cover → apply → store.save → sheets → telegram. No branching DAG, no queue.
+- **Single HTTP entrypoint** — every module calls `http_client.request(...)`. This is the only network seam, which is why tests can mock all I/O by monkeypatching one symbol (`tests/conftest.py:MockHttp`).
+- **JSON file as source of truth** — `data/vacancies.json` keyed by `vacancy_id`. Google Sheets is visualization-only and rewritten in full each run.
+- **Atomic persistence** — `store.save()` writes `.tmp` then `os.replace`, with `.bak` backup of the previous version; same pattern for token refresh in `auth.save_tokens()` (refresh_token is single-use — losing the pair means re-running OAuth).
+- **stdlib-only** — `urllib`, `json`, `re`, `concurrent.futures`. No `requests`, no third-party runtime deps.
+- **DRY_RUN safe default** — `config.dry_run()` returns `True` unless `DRY_RUN=0`; apply step writes no POSTs in dry mode.
+- **Two coexisting code paths** — the new modular `src/` pipeline (apply-enabled) and the legacy monolith `scripts/hh_ai_vacancies.py` (search/reporting only). CLAUDE.md is explicit about which path to edit.
 
 ## Layers
 
-**Orchestration:**
-- Purpose: Drive stage order, error handling, metrics, exit codes
-- Location: `src/pipeline.py`
-- Contains: `run()` orchestrator, `write_report()` helper
-- Depends on: every stage module, `config`
-- Used by: `python3 -m src.pipeline` (cron), `config/cron.yaml`
+**Entry / Trigger:**
+- Purpose: invoke the pipeline on a schedule
+- Location: `hh-ai-vacancies/config/cron.yaml` (Hermes cron, `0 9 */2 * *`, `no_agent: true`, `deliver: origin`); script `python3 -m src.pipeline`
+- Contains: schedule, env vars, workdir
+- Depends on: Hermes Agent host
+- Used by: operators
 
-**Stage modules (domain logic):**
-- Purpose: One self-contained concern per module (auth, fetch, enrich, cover, apply, sheets, telegram, store)
-- Location: `src/<stage>.py`
-- Contains: Pure functions operating on the `store` dict + `tokens` dict, returning `(result, tokens)` tuples where tokens may change via refresh
-- Depends on: `config`, `http_client`, `auth.api_request` (for HH calls), `telegram.send_alert` (for fatal signals)
+**Orchestrator:**
+- Purpose: sequence the 8 stages and aggregate metrics
+- Location: `hh-ai-vacancies/src/pipeline.py`
+- Contains: `run()`, `write_report()`
+- Depends on: every other `src/` module
+- Used by: cron entry, tests (`tests/test_pipeline_e2e.py`)
+
+**Domain stages (stateless functions operating on the store dict):**
+- Purpose: each stage reads/mutates the in-memory `vac` dict and returns tokens/metrics
+- Location: `hh-ai-vacancies/src/{auth,fetch,enrich,cover,apply,sheets_export,telegram,store}.py`
+- Contains: pure functions + `auth.api_request` wrapper
+- Depends on: `config`, `http_client`, `store`
 - Used by: `pipeline.run()`
 
-**Infrastructure:**
-- Purpose: Cross-cutting primitives (HTTP, config, paths, env loading)
-- Location: `src/http_client.py`, `src/config.py`
-- Contains: `request()`/`HttpResponse`/`NetworkError`; env loader, path/flag getters, constants
-- Depends on: stdlib only
-- Used by: all stage modules
+**Infrastructure / I/O:**
+- Purpose: single HTTP seam; path/env config; schema/validate
+- Location: `hh-ai-vacancies/src/http_client.py`, `hh-ai-vacancies/src/config.py`, `hh-ai-vacancies/src/store.py`
+- Contains: `request()`, `HttpResponse`, `NetworkError`; env loader; SCHEMA, `validate_record`
+- Depends on: `urllib`
+- Used by: all domain stages
 
-**Evaluation / ops:**
-- Purpose: Post-run goal check and LLM rubric; one-shot ops scripts
-- Location: `evals/`, `scripts/`
-- Contains: `check_metrics.py`, `rate_cover_letters.py`, `migrate_seen.py`, `hh_ai_vacancies.py`, `hh_token_updater.py`
-- Depends on: `src.config`, `src.store`, `src.http_client`
-- Used by: manual operator / Hermes cron (old monolith only)
+**External services (out of repo):**
+- HH.ru API (`api.hh.ru`), Ollama Cloud (`ollama.com/v1`), Google Sheets API, Telegram Bot API
+- Local files under `data/` (source of truth), `~/.hermes/.env` (secrets), `~/.config/gws/credentials.json` (Google OAuth)
 
 ## Data Flow
 
 ### Primary Request Path (pipeline run)
 
-1. Hermes cron triggers `python3 -m src.pipeline` per `config/cron.yaml` (`src/pipeline.py:run()` L19).
-2. `auth.load_tokens()` reads `data/hh_tokens.json` (`src/auth.py:17`); `AuthError` → Telegram alert + exit 2.
-3. `store.load()` reads `data/vacancies.json`; if empty and `LEGACY_SEEN_PATH` exists, `store.migrate_seen()` runs (`src/pipeline.py:31-34`).
-4. `fetch.fetch_all(tokens)` iterates `config.KEYWORDS`, calls `auth.api_request("GET", /vacancies?...)` per keyword, applies `is_active`/`is_relevant` filters, dedups within the run via `seen_ids` set (`src/fetch.py:87-121`).
-5. `store.merge(vac, fetched)` adds only new IDs; existing records are field-refreshed (status/cover_letter/first_seen untouched) (`src/store.py:107-123`).
-6. `enrich.enrich_new(vac, new_ids, tokens)` calls `GET /vacancies/{id}` for new IDs only, strips HTML, truncates description to 4000 chars, marks `enriched=True`; archived-between-fetch-and-enrich → status `не отправлено`/`archived` (`src/enrich.py:26-59`).
-7. `cover.generate_all(vac, new_ids)` runs `ThreadPoolExecutor` (`COVER_LETTER_WORKERS`, default 10), calls Ollama `/chat/completions`, cleans output, validates `letter_ok` (400–1500 chars, no placeholders/HTML), falls back to `fallback_letter` (`src/cover.py:136-156`).
-8. `apply.apply_batch(...)` for `select_candidates(vac, new_ids)` (new + retryable, cover-letter-required); `DRY_RUN=1` → status `не отправлено`/`dry_run`; live → `POST /negotiations`, status mapping per `docs/api-contract.md` §1, `BatchStop` on `limit_exceeded`/`resume_not_found`/`captcha_required`/5xx/network; 429 backoff `Retry-After` or 5→10→20s, max 3 (`src/apply.py:49-143`).
-9. `store.save(vac)` is called **before** export so source of truth persists even if export fails (`src/pipeline.py:75`).
-10. `sheets_export.export(vac)` clears `HH_AI!A:K`, writes header+rows in batches of 200 (Sheets API payload limit); 11 columns: `date|title|company|salary|location|level|url|match|cover-letter|respond|статус` (`src/sheets_export.py:56-84`).
-11. `telegram.send_report(metrics)` + `write_report(metrics)` → `data/last_run_report.json` for `evals/check_metrics.py` (`src/pipeline.py:86-105`).
-12. Exit: `0` success, `2` auth/config fatal, `3` fetch fatal.
+1. Cron triggers `python3 -m src.pipeline` (`hh-ai-vacancies/config/cron.yaml`)
+2. `pipeline.run()` loads env + paths (`hh-ai-vacancies/src/config.py:21`) and starts; prints `[pipeline] start (DRY_RUN=...)`
+3. `auth.load_tokens()` reads `data/hh_tokens.json` (`hh-ai-vacancies/src/auth.py:17`); on missing → `AuthError` + Telegram alert, exit 2
+4. `store.load()` reads `data/vacancies.json`; if empty and `LEGACY_SEEN_PATH` exists → `store.migrate_seen()` (`hh-ai-vacancies/src/store.py:131`)
+5. `fetch.fetch_all(tokens)` (`hh-ai-vacancies/src/fetch.py:87`) loops 13 keywords → `auth.api_request("GET", .../vacancies?...)` → `item_to_record` → filter (`is_active`, `is_relevant`) → dedup within run via `seen_ids`; returns `(records, found_total, tokens)`
+6. `store.merge(vac, fetched)` (`hh-ai-vacancies/src/store.py:107`) — existing records refreshed (title/salary/etc), status/cover_letter/first_seen never touched; returns `new_ids`
+7. `enrich.enrich_new(vac, new_ids, tokens)` (`hh-ai-vacancies/src/enrich.py:62`) — `GET /vacancies/{id}` per new id; mutates records; detects archive-flip
+8. `cover.generate_all(vac, new_ids)` (`hh-ai-vacancies/src/cover.py:146`) — parallel `ThreadPoolExecutor` over `generate_for_record`; Ollama call + `clean_letter` + `letter_ok` validation + `fallback_letter`
+9. `apply_mod.select_candidates(vac, new_ids)` (`hh-ai-vacancies/src/apply.py:146`) — new + retryable prior misses, only those with cover letters
+10. `apply_mod.apply_batch(vac, candidates, resume, tokens)` (`hh-ai-vacancies/src/apply.py:104`) — `POST /negotiations` per candidate; `BatchStop` halts batch and defers rest; 429 backoff (`Retry-After` or 5→10→20s, max 3)
+11. `store.save(vac)` (`hh-ai-vacancies/src/store.py:95`) — atomic write **before** sheets/telegram so source of truth persists even if downstream fails
+12. `sheets_export.export(vac)` (`hh-ai-vacancies/src/sheets_export.py:56`) — clear `HH_AI!A:K` + batched PUT (200 rows); failures alert but don't fail the run
+13. `telegram.send_report(metrics)` (`hh-ai-vacancies/src/telegram.py:54`) — HTML report; also printed to stdout for Hermes `deliver: origin`
+14. `write_report(metrics)` → `data/last_run_report.json` for `evals/check_metrics.py`
 
-### Token Refresh Flow
+### Auth refresh flow
 
-1. Any HH API call returns `403` with `errors[].type == "oauth"` → `_is_auth_error` true (`src/auth.py:68-72`).
-2. `auth.api_request` calls `refresh()` once → `POST /token grant_type=refresh_token`, saves new pair atomically (`src/auth.py:35-65`).
-3. Original request retried once with new access token.
-4. Second `403 oauth` in a row → `AuthError` + Telegram alert, pipeline exits 2.
-5. `invalid_grant / token not expired` → access still valid, reuse old tokens (no fail).
+1. Any `auth.api_request(...)` gets `403 {"errors":[{"type":"oauth"}]}` (`hh-ai-vacancies/src/auth.py:68`)
+2. `auth.refresh(tokens)` → `POST /token grant_type=refresh_token` (`hh-ai-vacancies/src/auth.py:35`); on 200, atomic save of new token pair; on `invalid_grant / not expired` keep old tokens
+3. One retry of the original request with new tokens (`_retried=True`)
+4. Second 403 → fatal `AuthError` + Telegram alert; pipeline returns exit code 2
+
+### Apply status flow
+
+- `201` → `отправлено` (or `already_applied` → `отправлено` reason=already_applied)
+- `test_required` → `тест`
+- `limit_exceeded` / `resume_not_found` / `captcha_required` / 5xx / `NetworkError` → `BatchStop`, rest deferred with `reason=deferred_<cause>`
+- `429` → backoff loop, then `не отправлено` reason=rate_limited
+- `invalid_vacancy` / `archived` → `не отправлено`, not retried
 
 **State Management:**
-- In-process only: a `store` dict (vacancy_id → record) mutated in place across stages and persisted by `store.save()`.
-- `tokens` dict threaded through every HH call; replaced on refresh and returned upward.
-- No long-lived in-memory state between runs — every run starts from `vacancies.json` on disk.
+- In-memory `vac` dict (vacancy_id → record) threaded through every stage; mutated in place
+- Persisted only via `store.save()` (atomic, with `.bak`)
+- Tokens threaded explicitly as `(resp, tokens)` returns so refreshes propagate
+- No global mutable state except module-level compiled regexes in `config.py` (`JUNK_RE`, `ARCHIVE_RE`, `RESUME_RE`)
 
 ## Key Abstractions
 
 **Vacancy record:**
-- Purpose: Canonical unit of state; one per HH vacancy
-- Examples: `src/store.py` (`SCHEMA`, `new_record`), `data/vacancies.json`
-- Pattern: Dict validated against `SCHEMA` (field → (type, required)); status ∈ `config.VALID_STATUSES`; persisted keyed by `vacancy_id`
+- Purpose: unit of data flowing through the pipeline
+- Schema: `hh-ai-vacancies/src/store.py:SCHEMA` (22 fields, typed, required flags)
+- Constructor: `store.new_record(vacancy_id, url, title, **kw)`
+- Validator: `store.validate_record(rec)` — returns list of problems
+- Status enum: `config.VALID_STATUSES = {отправлено, не отправлено, тест}`
 
-**HH API request wrapper:**
-- Purpose: Bearer auth + auto-refresh-once-on-403-oauth + uniform `(resp, tokens)` return
-- Examples: `src/auth.py:api_request`
-- Pattern: Recursive single-retry with `_retried` flag; raises `AuthError` only when refresh fails or second 403 arrives
+**HttpResponse:**
+- Purpose: uniform response object across the single HTTP seam
+- Location: `hh-ai-vacancies/src/http_client.py:7`
+- Pattern: `request()` returns `HttpResponse` for ANY HTTP status (no raise on 4xx/5xx); only network failures raise `NetworkError`
 
-**HTTP client:**
-- Purpose: One monkeypatchable network entrypoint for the whole test harness
-- Examples: `src/http_client.py:request`
-- Pattern: `urllib.request` wrapper returning `HttpResponse` for **any** HTTP status (never raises on 4xx/5xx); raises `NetworkError` only on connection failure. Tests swap `http_client.request` with `MockHttp` (FIFO URL-substring matcher) in `tests/conftest.py`.
+**AuthError:**
+- Purpose: fatal auth signal bubbled to orchestrator
+- Location: `hh-ai-vacancies/src/auth.py:13`
+- Pattern: raised after refresh fails; pipeline catches and alerts via Telegram
 
-**BatchStop signal:**
-- Purpose: Halt apply batch on unrecoverable conditions, defer remainder to next run
-- Examples: `src/apply.py:BatchStop`
-- Pattern: Raised with `reason`; `apply_batch` catches it, marks remaining candidates `не отправлено`/`deferred_<reason>`, breaks the loop
-
-**Status / status_reason:**
-- Purpose: Idempotent retry semantics across runs
-- Examples: `src/config.py` (`STATUS_SENT/NOT_SENT/TEST`, `VALID_STATUSES`), `src/apply.py:select_candidates` (`RETRYABLE` set)
-- Pattern: `select_candidates` re-queues records whose `status_reason` is in `RETRYABLE` or starts with `deferred_`; `migrated`, `отправлено`, `тест` are never re-applied
+**BatchStop:**
+- Purpose: halt the apply batch on fatal per-vacancy errors while leaving the rest deferrable
+- Location: `hh-ai-vacancies/src/apply.py:14`
+- Pattern: carries `reason`; `apply_batch` catches, marks remaining as `deferred_<reason>`, breaks
 
 ## Entry Points
 
-**New pipeline (primary):**
-- Location: `src/pipeline.py:run()`; invoked as `python3 -m src.pipeline`
-- Triggers: Hermes cron job defined in `config/cron.yaml` (`schedule: "0 9 */2 * *"`, `DRY_RUN: "0"`, `APPLY_LIMIT: "0"`)
-- Responsibilities: Full 8-stage apply pipeline
+**`python3 -m src.pipeline`:**
+- Location: `hh-ai-vacancies/src/pipeline.py` (`if __name__ == "__main__": sys.exit(run())`)
+- Triggers: Hermes cron (`hh-ai-vacancies/config/cron.yaml`); manual `DRY_RUN=1 python3 -m src.pipeline`
+- Responsibilities: run all 8 stages, write report, exit with 0/2/3
 
-**Old monolith (reference, still deployed as cron `99a55e0f5ac4`):**
-- Location: `scripts/hh_ai_vacancies.py`
-- Triggers: Hermes cron job `99a55e0f5ac4`, `no_agent: true`
-- Responsibilities: Search → filter → dedup → Sheets → Telegram report only; uses `HH_APP_TOKEN`. Cutover plan in `docs/DEPLOY.md` Step 4 (pause+remove old, `cronjob create` from `config/cron.yaml`).
+**`python3 evals/check_metrics.py`:**
+- Location: `hh-ai-vacancies/evals/check_metrics.py`
+- Triggers: post-run verification
+- Responsibilities: deterministic goal check (schema, dups, enrichment ≥95%, covers 100%, sheets_rows == JSON, telegram_delivered)
 
-**Evals:**
-- Location: `evals/check_metrics.py` (exit 0 = goal reached), `evals/rate_cover_letters.py` (rubric ≥7/10)
-- Triggers: Manual post-run
+**`python3 -m scripts.migrate_seen`:**
+- Location: `hh-ai-vacancies/scripts/migrate_seen.py`
+- One-shot legacy `~/.hermes/hh_ai_seen.json` → `data/vacancies.json`
 
-**Migration:**
-- Location: `scripts/migrate_seen.py` (`python3 -m scripts.migrate_seen`)
-- Triggers: One-shot, manual
+**`python3 -u scripts/hh_token_updater.py`:**
+- Location: `hh-ai-vacancies/scripts/hh_token_updater.py`
+- Playwright-based renewal of the legacy HH **app** token (not used by the new pipeline, which uses user OAuth)
 
-**Token updater (old scraper):**
-- Location: `scripts/hh_token_updater.py` (Playwright; needs `xvfb-run -a` on headless hosts, OTP via `/tmp/hh_otp.txt`)
-- Triggers: Manual, when old app token expires
+**Legacy monolith:**
+- Location: `hh-ai-vacancies/scripts/hh_ai_vacancies.py`
+- Trigger: legacy Hermes cron `99a55e0f5ac4` (to be paused/removed at `docs/DEPLOY.md` Step 4)
+- Scope: search → Sheets → Telegram only (no apply, no cover letters, no user OAuth)
 
 ## Architectural Constraints
 
-- **Threading:** Single main thread for all stages except cover-letter generation, which uses `ThreadPoolExecutor` bounded by `COVER_LETTER_WORKERS` (default 10). No other concurrency. `time.sleep` is patched out in tests via the `no_sleep` fixture.
-- **Global state:** None mutable at module import except env-loaded constants in `src/config.py` (loaded once at import via `load_env_file()`). `KEYWORDS`, `JUNK_RE`, `ARCHIVE_RE`, `RESUME_RE`, status constants are module-level.
-- **Circular imports:** `auth` imports `telegram`; `telegram` imports `http_client`, `config` — no cycle. `fetch` imports `auth`, `config`, `store`; `enrich` imports `auth`, `config`, `fetch` (for `format_salary`), `store` — no cycle. `apply` imports `auth`, `config`, `http_client`, `telegram`, `store`.
-- **HTTP indirection (mandatory):** Any new module that makes HTTP calls MUST route through `http_client.request`, otherwise it bypasses the `MockHttp` test harness and tests will raise `AssertionError: Unexpected HTTP call`.
-- **Stdlib only (new pipeline):** No `requests` or third-party runtime deps. `pytest` is the only dev dep (no `requirements.txt`).
-- **User-Agent mandatory:** All HH requests must set `config.HH_USER_AGENT` or HH returns `400 bad_user_agent`.
-- **Atomic persistence required:** `vacancies.json` and `hh_tokens.json` must be written via temp+`os.replace` because the HH `refresh_token` is single-use — losing the access/refresh pair forces a full re-OAuth.
-- **DRY_RUN safe default:** `DRY_RUN` defaults to `"1"`; live runs require explicit `DRY_RUN=0` and ideally `APPLY_LIMIT=2` on first run.
-- **Telegram parse_mode:** Always `HTML`, never Markdown — dynamic content must be escaped with `telegram.esc` (`html.escape`); job titles must be `<a href>` links to the vacancy URL.
+- **stdlib only** — do NOT add `requests` or other third-party runtime deps. Tests need `pytest` but it is not in a `requirements.txt` (none exists).
+- **Single HTTP seam** — any new module making HTTP calls MUST route through `http_client.request` or it bypasses the `MockHttp` test harness.
+- **Single source of truth** — `data/vacancies.json` keyed by `vacancy_id`. No module reads cell data back from Google Sheets.
+- **Atomic persistence** — token pair and vacancies store are written via temp+rename; refresh_token is single-use, losing the pair forces re-running OAuth.
+- **Sheets is write-only** — full rewrite each run; column shape changes require clearing the sheet first.
+- **Telegram HTML only** — `parse_mode=HTML`; dynamic content must be `html.escape()`d via `telegram.esc()`. MarkdownV2 renders as raw text (see `hh-ai-vacancies/references/telegram-html-vs-markdownv2.md`).
+- **`User-Agent` mandatory** — all HH requests use `config.HH_USER_AGENT` or HH returns `400 bad_user_agent`.
+- **Threading** — only `cover.generate_all` uses `ThreadPoolExecutor` (`COVER_LETTER_WORKERS`, default 10). All other stages are sequential single-threaded.
+- **Global state** — module-level compiled regexes in `config.py` (`JUNK_RE`, `ARCHIVE_RE`, `RESUME_RE`) and constants (`KEYWORDS`, `COLUMNS`); env loaded once at import via `load_env_file()`.
+- **Circular imports** — none detected. Modules import `config`, `http_client`, `store`, `auth` as needed; `auth` imports `store.now_iso` and `telegram`.
+- **Path override** — `HH_PIPELINE_HOME` env var redirects all `data/` paths (used by `tests/conftest.py:home` fixture for isolation).
+- **Hermes .env edits** — Hermes blocks `sed`/`patch`/`write_file` on `.env`; use Python `re.sub` to update keys (snippet documented in `SKILL.md`).
 
 ## Anti-Patterns
 
-### Sheets read-back
+### Bypassing the HTTP seam
 
-**What happens:** Treating Google Sheets as a data source by reading cell values back into the pipeline.
-**Why it's wrong:** `data/vacancies.json` is the single source of truth. Sheets is visualization-only — `sheets_export.py` does a full clear+rewrite each run, so any value read back would be stale or overwritten.
-**Do this instead:** Read state only from `src/store.load()` (`data/vacancies.json`); write to Sheets via `src/sheets_export.py:export()` and never consume its output.
-
-### Bypassing `http_client.request`
-
-**What happens:** A new module calls `urllib.request.urlopen` (or `requests`) directly.
-**Why it's wrong:** Tests monkeypatch `http_client.request` with `MockHttp`; a direct call makes a real network request, breaking isolation and raising `AssertionError` in the test harness.
-**Do this instead:** Route every HTTP call through `src/http_client.request(method, url, headers, data, timeout)`, returning `HttpResponse` for any status.
-
-### Reversing the junk-title filter polarity
-
-**What happens:** Inverting `title_ok`/`is_relevant` so junk titles get added instead of removed.
-**Why it's wrong:** `JUNK_RE` matches unwanted titles; the filter returns `True` when the title does NOT match. Reversing it admits data-entry/designer/developer roles into the report. This has caused a real incident (see `references/archive-filter-incident-2026-06-27.md`).
-**Do this instead:** Keep `is_relevant` returning `False` when `JUNK_RE.search(title)` is truthy (`src/fetch.py:47`); add regression coverage in `tests/test_fetch_enrich.py`.
+**What happens:** A module uses `urllib.request.urlopen` directly (or `requests`) instead of `http_client.request`.
+**Why it's wrong:** Tests monkeypatch `http_client.request` via `MockHttp` (`hh-ai-vacancies/tests/conftest.py:54`); direct calls bypass the harness, hit live network, and are untestable.
+**Do this instead:** Always call `http_client.request(method, url, headers=..., data=..., timeout=...)` — see `hh-ai-vacancies/src/auth.py:42`, `hh-ai-vacancies/src/cover.py:81`, `hh-ai-vacancies/src/sheets_export.py:23`.
 
 ### Reporting archived vacancies as new
 
-**What happens:** Skipping the `ARCHIVE_RE` filter before enrichment surfaces closed vacancies in the Telegram report.
-**Why it's wrong:** The report claims "new" hits that are actually archived, wasting applies and misleading the operator.
-**Do this instead:** Apply `is_active` (ARCHIVE_RE on `title + snippet`) before enrichment in `fetch.fetch_all` (`src/fetch.py:113`); re-check `data.archived` in `enrich_record` and set status `не отправлено`/`archived` (`src/enrich.py:55-58`).
+**What happens:** Skipping the archive filter before enrichment lets closed/archived vacancies surface in the Telegram report.
+**Why it's wrong:** Real incident — `hh-ai-vacancies/references/archive-filter-incident-2026-06-27.md`. Report becomes misleading.
+**Do this instead:** Apply `config.ARCHIVE_RE` to `title + snippet` in `fetch.is_active()` **before** enrichment (`hh-ai-vacancies/src/fetch.py:37`), and re-check `data.get("archived")` in `enrich.enrich_record` (`hh-ai-vacancies/src/enrich.py:56`) — the vacancy can flip to archive between fetch and enrich.
 
-### Non-atomic token writes
+### Treating `bad_authorization` as revocation
 
-**What happens:** Writing `hh_tokens.json` in place without temp+rename.
-**Why it's wrong:** The HH `refresh_token` is single-use. A crash between truncation and full write loses the access/refresh pair, forcing a manual re-OAuth.
-**Do this instead:** Always use `auth.save_tokens` (temp + `os.replace`) (`src/auth.py:25-32`).
+**What happens:** On `403 oauth / bad_authorization`, an operator immediately runs Playwright token renewal.
+**Why it's wrong:** Frequently a typo (e.g., `0`/`O`, `1`/`l`, `I`/`l`); Playwright renewal is disruptive and OTP-gated.
+**Do this instead:** Compare the token byte-for-byte with `dev.hh.ru/admin` first; only then escalate (per CLAUDE.md pitfall).
+
+### Telegram MarkdownV2 / unescaped dynamic content
+
+**What happens:** Building Telegram messages with `[text](url)` / `**bold**` or unescaped user content.
+**Why it's wrong:** The dispatcher sets `parse_mode=HTML`, so Markdown renders as raw text; unescaped `<>&` breaks the payload.
+**Do this instead:** Use `telegram.esc()` (`hh-ai-vacancies/src/telegram.py:8`) on all dynamic content; make titles clickable via `<a href="...">` (see `hh-ai-vacancies/src/sheets_export.py:41` for the HYPERLINK formula analogue).
+
+### Non-atomic token save
+
+**What happens:** Writing `hh_tokens.json` in place.
+**Why it's wrong:** `refresh_token` is single-use; a crash between writing `access_token` and `refresh_token` loses the pair → forces a full re-OAuth.
+**Do this instead:** `auth.save_tokens()` temp+rename pattern (`hh-ai-vacancies/src/auth.py:25`).
 
 ## Error Handling
 
-**Strategy:** Defensive, fail-loud only for unrecoverable states (auth, config); degrade gracefully for non-critical sinks (Sheets, Telegram). Exit codes signal severity: `0` success, `2` auth/config fatal, `3` fetch fatal.
+**Strategy:** Two-tier — recoverable (handled in-stage with status/reason) vs fatal (`AuthError`/`BatchStop`/`RuntimeError` bubbled to orchestrator which alerts via Telegram and returns a non-zero exit code).
 
 **Patterns:**
-- `AuthError` raised from `auth.py` on fatal 403-oauth-after-refresh or unreachable token endpoint; caught in `pipeline.run()`, emits Telegram alert, returns exit 2.
-- `BatchStop(reason)` in `apply.py` halts the apply loop; remaining candidates marked `deferred_<reason>` for next run; metrics still recorded.
-- HTTP 429 handled inline with bounded exponential backoff (`Retry-After` or 5→10→20s, max 3) — no exception.
-- 5xx / `NetworkError` from `http_client` → `BatchStop("api_down")` in apply; logged in fetch (`errors` counter, raises `RuntimeError` only if ALL keywords fail).
-- `letter_ok` validation rejects LLM output outside 400–1500 chars or with placeholders/HTML → deterministic `fallback_letter`.
-- Sheets/Telegram exceptions caught in `pipeline.run()`, alerted, and metric set to `-1`/`False` — pipeline still exits 0.
+- `NetworkError` from `http_client` → `apply_one` translates to `BatchStop("api_down")`; `auth.refresh` translates to `AuthError`; `telegram._send` swallows (returns `False`).
+- HTTP 4xx/5xx never raise from `http_client.request` — caller inspects `resp.status`. Only `auth._is_auth_error(resp)` (403 + `errors[].type=="oauth"`) triggers refresh.
+- `apply.apply_one` status machine maps every negotiations error type to a record status + reason; fatal ones raise `BatchStop`; 429 uses `Retry-After` or exponential 5→10→20s capped at `MAX_RETRIES_429=3`.
+- `cover.call_ollama` returns `""` on any failure (network or non-200); `cover.letter_ok` validates 400–1500 chars, no placeholders, no HTML; on failure `fallback_letter` produces a deterministic template letter.
+- Exit codes: `0` success, `2` auth/config fatal, `3` fetch fatal (all keywords failed → `RuntimeError`).
+- `store.save(vac)` is called **before** sheets export so a Sheets/Telegram failure never loses the source of truth.
 
 ## Cross-Cutting Concerns
 
-**Logging:** `print(..., file=sys.stderr)` with `[stage]` prefixes (e.g. `[pipeline] start`, `[fetch] 'kw' HTTP 400`, `[apply] batch stopped: reason`). `telegram._send` also prints the full message to stdout (Hermes `deliver: origin` echoes stdout to Telegram).
+**Logging:** `print(..., file=sys.stderr)` for progress lines prefixed with `[module]` (e.g., `[pipeline]`, `[fetch]`, `[apply]`). `telegram._send` also prints the HTML payload to stdout for Hermes `deliver: origin`.
 
-**Validation:** `store.validate_record` checks every record against `SCHEMA` (type + required) and `VALID_STATUSES`; `evals/check_metrics.py` enforces 100% valid records, 0 duplicates, ≥95% enrichment, 100% cover letters, `sheets_rows == len(JSON)`, `telegram_delivered`.
+**Validation:** `store.validate_record(rec)` enforces `SCHEMA` types and required fields; `config.VALID_STATUSES` constrains the `status` field; `check_metrics.py` enforces 100% valid records, 0 dups, ≥95% enrichment, 100% covers as the "goal reached" gate.
 
-**Authentication:** User OAuth bearer token from `data/hh_tokens.json`, auto-refreshed once on `403 oauth`; `User-Agent` mandatory on all HH requests. Google Sheets uses OAuth2 refresh token in `~/.config/gws/credentials.json`. Telegram uses bot token from env. Secrets loaded from `~/.hermes/.env` via `config.load_env_file` (never overwrites existing env). **Never print secrets** — redact with `[REDACTED]`.
+**Authentication:** User OAuth (`data/hh_tokens.json`) for all HH API calls in the new pipeline; app token (`HH_APP_TOKEN`) only in the legacy monolith. Auto-refresh-once on `403 oauth`; second 403 → fatal + Telegram alert. Google Sheets uses an OAuth refresh token at `~/.config/gws/credentials.json` (refreshed per run via `sheets_export.get_access_token`).
+
+**Secrets:** Stored in `~/.hermes/.env` (HH tokens, Telegram bot token, Ollama API key, resume id) loaded by `config.load_env_file()` without overwriting existing env vars. Never printed in reports/logs — replace with `[REDACTED]`. `~/.hermes/.env` edits must use Python `re.sub`, not `sed`/`patch`/`write_file` (Hermes blocks those).
 
 ---
 

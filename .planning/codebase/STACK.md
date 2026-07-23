@@ -5,90 +5,91 @@
 ## Languages
 
 **Primary:**
-- Python 3.13 — all pipeline modules in `src/`, the orchestrator (`src/pipeline.py`), evals (`evals/`), and the new autonomous apply pipeline. Stdlib only (`urllib`, `json`, `re`, `concurrent.futures`, `os`, `shutil`, `datetime`, `html`, `argparse`, `random`). No `requests`, no third-party HTTP/HTTP libraries in the pipeline.
+- Python 3.10 — all application logic in `hh-ai-vacancies/src/*.py`, `hh-ai-vacancies/scripts/*.py`, `hh-ai-vacancies/evals/*.py`, `hh-ai-vacancies/tests/*.py` (pytest cache shows cpython-310 pycs).
 
 **Secondary:**
-- Python 3 (Playwright) — `scripts/hh_token_updater.py` imports `playwright.sync_api` for interactive browser-driven HH.ru token renewal. This is the ONLY third-party Python dependency in the repo.
-- JavaScript (Userscript) — `templates/hh_auto_response.user.js` is a Tampermonkey/Violentmonkey userscript (reference UI automation, not part of the cron pipeline).
+- JavaScript — Tampermonkey userscript template `hh-ai-vacancies/templates/hh_auto_response.user.js` (browser-side auto-response helper, not part of the cron pipeline).
+- YAML — cron job definition `hh-ai-vacancies/config/cron.yaml`.
 
 ## Runtime
 
 **Environment:**
-- Python 3.13.0 (observed on dev host). No `.python-version` / `.nvmrc` pinning; `python3` is invoked directly by cron (`config/cron.yaml` `script: python3 -m src.pipeline`).
-- Cron host: Hermes Agent (Nous Research) — `no_agent: true` script-only job, workdir `~/.hermes/hh-ai-vacancies`. Not a containerized deployment; relies on the host Python.
-- Playwright + Chromium required only for `scripts/hh_token_updater.py`; on headless hosts it must be wrapped with `xvfb-run -a`.
+- Python 3.10 stdlib only for the new modular pipeline (`hh-ai-vacancies/src/`). No `requests`, no third-party HTTP libs. Uses `urllib.request`, `urllib.parse`, `urllib.error`, `json`, `re`, `concurrent.futures`, `datetime`, `html`, `shutil`, `os`, `sys`, `argparse`.
+- Runs on a Hermes Agent cron host (Linux). Workdir `~/.hermes/hh-ai-vacancies` per `hh-ai-vacancies/config/cron.yaml`.
+- `scripts/hh_token_updater.py` additionally requires Playwright + Chromium and `xvfb-run` on headless hosts (`pip install playwright; python3 -m playwright install chromium`).
 
 **Package Manager:**
-- None declared. No `requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile`, `package.json`, or lockfile present.
-- The new pipeline is intentionally stdlib-only (enforced by convention per `CLAUDE.md`: "do not add `requests` or other third-party deps").
-- `pytest` is required to run the 53-test suite but is NOT declared as a dependency anywhere — install ad-hoc (`pip install pytest`).
-- `playwright` is required only by `scripts/hh_token_updater.py` (declared in its module docstring: `pip install playwright` then `python3 -m playwright install chromium`).
-- Lockfile: missing (no dependency manifest to lock).
+- None declared. No `requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile`, or `poetry.lock` exist.
+- Lockfile: missing — stdlib-only by design; only runtime extra is Playwright (used solely by the offline token updater script, documented inline in its header).
+- pytest is expected to be preinstalled on the host for `python3 -m pytest`.
 
 ## Frameworks
 
 **Core:**
-- None. This is a stdlib-only scheduled script, not a web framework app. No Django/Flask/FastAPI. HTTP is done via `urllib.request` through a single entrypoint (`src/http_client.py:request()`).
+- None (no web/CLI framework). The application is a batch pipeline invoked as `python3 -m src.pipeline` (`hh-ai-vacancies/src/pipeline.py`).
 
 **Testing:**
-- pytest — runner only (no `pytest` config file, no plugins observed). Config via `tests/conftest.py` fixtures (`home`, `mock_http`, `no_sleep`, `tg_capture`, `tokens_file`) and helper builders (`make_resp`, `search_item`, `vacancy_details`). 53 tests across `tests/test_*.py`.
+- pytest 9.1.1 — 53 test cases across `hh-ai-vacancies/tests/` (per `hh-ai-vacancies/CLAUDE.md`). Cache artifacts in `hh-ai-vacancies/.pytest_cache/` and `__pycache__/test_*.cpython-310-pytest-9.1.1.pyc` confirm version.
+- No coverage tool configured (`.coverage` file present at `hh-ai-vacancies/.coverage` but no `.coveragerc`/coverage config).
 
 **Build/Dev:**
-- No build step. Run directly: `python3 -m src.pipeline` (DRY_RUN defaults to 1 = safe).
-- No linter/formatter config (no `.eslintrc`, `.prettierrc`, `biome.json`, `ruff.toml`, `.flake8`, `pyproject.toml`). No CI config (`.github/`, `.gitlab-ci.yml` absent).
+- No build step. Python runs from source.
+- Cron scheduler: Hermes Agent cron (job `99a55e0f5ac4` for the old monolith; `config/cron.yaml` defines the new modular job, schedule `0 9 */2 * *`).
 
 ## Key Dependencies
 
 **Critical:**
-- Python stdlib `urllib.request` / `urllib.parse` / `urllib.error` — sole HTTP transport for HH API, Google Sheets API, Telegram Bot API, Ollama Cloud. All routed through `src/http_client.py:request()` (returns `HttpResponse` for any HTTP status, raises `NetworkError` only on DNS/timeout/connection failure).
-- `concurrent.futures.ThreadPoolExecutor` — parallel cover-letter generation (`src/cover.py:generate_all`, `COVER_LETTER_WORKERS` workers, default 10).
+- Python 3.10 stdlib (`urllib`, `json`, `re`, `concurrent.futures`, `html`, `shutil`, `argparse`) — the entire HTTP surface goes through the single entrypoint `hh-ai-vacancies/src/http_client.py:request()`.
+- Playwright + Chromium — only for `hh-ai-vacancies/scripts/hh_token_updater.py` (interactive HH.ru admin login to rotate the app token). Not used by the cron pipeline.
 
-**Infrastructure (external SDKs accessed over HTTP, no client libraries):**
-- HeadHunter API — `api.hh.ru` (search `/vacancies`, detail `/vacancies/{id}`, apply `/negotiations`, OAuth `/token`).
-- Google Sheets API v4 — `sheets.googleapis.com` and `oauth2.googleapis.com/token` (refresh-token flow, batch write 200 rows at a time).
-- Telegram Bot API — `api.telegram.org/bot{token}/sendMessage` (HTML parse mode).
-- Ollama Cloud — `{OLLAMA_BASE_URL}/chat/completions` (OpenAI-compatible chat completions; default model `deepseek-v4-flash`, `reasoning_effort=none` for deepseek models).
-- Playwright (Chromium) — `scripts/hh_token_updater.py` only; interactive HH admin login + OTP + token reveal.
+**Infrastructure:**
+- Telegram Bot API — reports + alerts via `hh-ai-vacancies/src/telegram.py` (stdlib `urllib`, no SDK).
+- Google Sheets API v4 — full-rewrite export via `hh-ai-vacancies/src/sheets_export.py` (OAuth refresh-token flow against `https://oauth2.googleapis.com/token`).
+- Ollama Cloud — cover-letter generation + LLM-rubric eval via `hh-ai-vacancies/src/cover.py` and `hh-ai-vacancies/evals/rate_cover_letters.py` (OpenAI-compatible `/chat/completions` endpoint, default model `deepseek-v4-flash`, base URL `https://ollama.com/v1`).
+- HeadHunter (hh.ru) public REST API — search, vacancy details, OAuth token refresh, and `/negotiations` apply via `hh-ai-vacancies/src/fetch.py`, `hh-ai-vacancies/src/enrich.py`, `hh-ai-vacancies/src/auth.py`, `hh-ai-vacancies/src/apply.py`.
 
 ## Configuration
 
 **Environment:**
-- Secrets/config loaded from `~/.hermes/.env` by `src/config.py:load_env_file()` (does NOT overwrite already-set env vars). The same loader is duplicated in `scripts/hh_ai_vacancies.py:_load_hermes_env()`.
-- `HH_PIPELINE_HOME` — override knob for all `data/` paths (used by tests to redirect to tmp dir); defaults to repo root.
-- Key env vars (see `src/config.py`):
-  - `DRY_RUN` (default `"1"`) — `1` = no real applies, `0` = live.
-  - `APPLY_LIMIT` (default `"0"`, 0 = uncapped) — cap applies per run; first live run should set `2`.
-  - `APPLY_PAUSE_SEC` (default `"5"`) — pause between `/negotiations` POSTs.
-  - `HH_RESUME_ID` — required for live apply (empty → Telegram alert + exit 2).
-  - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram delivery; empty → `_send` falls back to stdout-only.
-  - `OLLAMA_API_KEY`, `OLLAMA_BASE_URL` (default `https://ollama.com/v1`), `OLLAMA_MODEL` (default `deepseek-v4-flash`).
-  - `COVER_LETTER_MAX_TOKENS` (900), `COVER_LETTER_TEMP` (0.4), `COVER_LETTER_WORKERS` (10).
-  - `HH_APP_TOKEN`, `HH_ADMIN_EMAIL`, `HH_ADMIN_PASSWORD` — used only by the OLD monolith / token updater.
+- Secrets and runtime config live in `~/.hermes/.env`, loaded by `hh-ai-vacancies/src/config.py:load_env_file()` (does not overwrite existing env vars). Hermes blocks `sed`/`patch`/`write_file` edits to this file; update keys with Python `re.sub` (snippet in `hh-ai-vacancies/SKILL.md`).
+- Path override knob: `HH_PIPELINE_HOME` (defaults to package parent dir) — every `data/` path flows through `hh-ai-vacancies/src/config.py:data_dir()`. This is the test-isolation switch (see `hh-ai-vacancies/tests/conftest.py:home` fixture).
 
-**Build:**
-- No build config. Cron config: `config/cron.yaml` (Hermes cronjob, schedule `0 9 */2 * *`, `deliver: origin`, `no_agent: true`).
+**Key env vars (defined in `hh-ai-vacancies/src/config.py`):**
+- `DRY_RUN` — default `"1"` (safe; no applies sent). `0` = live mode.
+- `APPLY_LIMIT` — int, default `0` (uncapped). Caps applies per run.
+- `APPLY_PAUSE_SEC` — float, default `5`. Delay between `/negotiations` POSTs.
+- `HH_RESUME_ID` — required for live applies; missing in live mode triggers Telegram alert and exit 2.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram delivery (optional; absent → stdout fallback, no error).
+- `OLLAMA_BASE_URL` — default `https://ollama.com/v1`.
+- `OLLAMA_MODEL` — default `deepseek-v4-flash`.
+- `OLLAMA_API_KEY` — required for LLM cover letters; absent → deterministic template fallback (`hh-ai-vacancies/src/cover.py:fallback_letter`).
+- `COVER_LETTER_MAX_TOKENS` (default `900`), `COVER_LETTER_TEMP` (default `0.4`), `COVER_LETTER_WORKERS` (default `10`, parallel `ThreadPoolExecutor`).
+- `HH_APP_TOKEN` — used only by the legacy monolith `hh-ai-vacancies/scripts/hh_ai_vacancies.py` for public search; the new pipeline uses user OAuth tokens instead.
 
-**Hardcoded constants (`src/config.py`):**
-- `HH_USER_AGENT = "Product AI Vacancy Bot / 1.0 (sagestaf@gmail.com)"` — mandatory for all HH requests (else `400 bad_user_agent`).
+**Hardcoded constants (`hh-ai-vacancies/src/config.py`):**
 - `HH_API = "https://api.hh.ru"`.
+- `HH_USER_AGENT = "Product AI Vacancy Bot / 1.0 (sagestaf@gmail.com)"` — mandatory for all HH requests (HH returns `400 bad_user_agent` without it).
 - `SPREADSHEET_ID = "1R4uQG-yy2mZ4zuJVkQgrfxoVW6N60suUmnEVKBFolok"`, `SHEET_GID = 1464494667`, `SHEET_NAME = "HH_AI"`.
 - `GOOGLE_CREDS_PATH = ~/.config/gws/credentials.json`.
-- `KEYWORDS` — 13 AI/PM search terms (en/ru).
-- `JUNK_RE`, `ARCHIVE_RE`, `RESUME_RE` — compiled regex filters.
-- Status constants: `STATUS_SENT="отправлено"`, `STATUS_NOT_SENT="не отправлено"`, `STATUS_TEST="тест"`, `VALID_STATUSES`.
+- `KEYWORDS` — 13 AI/PM search terms (Russian + English).
+- Regex filters `JUNK_RE`, `RESUME_RE`, `ARCHIVE_RE` (compiled at import).
+- Status constants `STATUS_SENT="отправлено"`, `STATUS_NOT_SENT="не отправлено"`, `STATUS_TEST="тест"`; `VALID_STATUSES` set.
+
+**Build:**
+- No build config. Cron job config: `hh-ai-vacancies/config/cron.yaml` (Hermes `cronjob create`; edits require `pause → remove → create` because `update` silently no-ops on identical bodies).
+- Git ignore: `hh-ai-vacancies/.gitignore` excludes `__pycache__/`, `*.pyc`, `*.pyo`, `.venv/`, `*.log`, `.DS_Store`, model files (`*.tflite`, `*.onnx`, `*.pt`, `*.pth`, `*.safetensors`).
 
 ## Platform Requirements
 
 **Development:**
-- Python 3.13 (any 3.10+ likely works; uses `from __future__ import annotations` only in the token updater, otherwise stdlib typing).
-- `pytest` installed locally to run `python3 -m pytest`.
-- Optional: `playwright` + Chromium for token renewal.
+- Python 3.10. pytest 9.1.1 for tests. No virtualenv mandated (`.venv/` ignored if used).
+- For token rotation only: Playwright + Chromium + `xvfb-run -a` on headless hosts (`hh-ai-vacancies/scripts/hh_token_updater.py`).
+- Tests run fully offline — `hh-ai-vacancies/tests/conftest.py:MockHttp` monkeypatches `http_client.request` with a FIFO URL-substring queue; no live network.
 
 **Production:**
-- Hermes Agent cron host. Job `99a55e0f5ac4` (old monolith, `scripts/hh_ai_vacancies.py`) to be replaced by `config/cron.yaml` (`python3 -m src.pipeline`) per `docs/DEPLOY.md` Step 4.
-- Files on host: `~/.hermes/.env`, `~/.hermes/hh_ai_seen.json` (legacy dedup), `~/.config/gws/credentials.json` (Google OAuth), `~/.hermes/hh-ai-vacancies/data/hh_tokens.json` (HH user OAuth tokens), `~/.hermes/hh-ai-vacancies/data/vacancies.json` (source of truth).
-- For token updater on headless host: `xvfb-run -a` wrapper + ability to write `/tmp/hh_otp.txt` manually.
-- No containerization, no Docker, no process manager beyond Hermes cron.
+- Hermes Agent cron host (Linux). New pipeline cron: `python3 -m src.pipeline` from workdir `~/.hermes/hh-ai-vacancies`, schedule every 2 days at 09:00 MSK, `no_agent: true`, `deliver: origin` (stdout mirrored to Telegram in addition to direct Bot API).
+- Legacy monolith cron job id `99a55e0f5ac4` (`no_agent: true`); cutover described in `hh-ai-vacancies/docs/DEPLOY.md` Step 4.
+- Required host files: `~/.hermes/.env` (secrets), `data/hh_tokens.json` (user OAuth pair — atomic save because `refresh_token` is single-use), `~/.config/gws/credentials.json` (Google Sheets OAuth).
 
 ---
 

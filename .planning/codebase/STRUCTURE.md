@@ -6,31 +6,35 @@
 
 ```
 hh-ai-vacancies/
-├── src/                  # New modular apply pipeline (primary code path)
+├── README.md                          # Project overview, env vars, keywords, filters
+├── CLAUDE.md                          # Codebase guidance for Claude Code (authoritative)
+├── SKILL.md                           # Umbrella Hermes skill: recipes + incident history
+├── config/
+│   └── cron.yaml                       # Hermes cron job definition (new pipeline)
+├── docs/
+│   ├── api-contract.md                 # Verified HH API contract (negotiations, token, errors)
+│   └── DEPLOY.md                       # Step-by-step deploy + cutover (T7–T9)
+├── src/                                # NEW modular pipeline (apply-enabled)
 │   ├── __init__.py
-│   ├── pipeline.py       # Orchestrator: 8 stages, run() entrypoint
-│   ├── auth.py           # HH user OAuth load/refresh, api_request wrapper
-│   ├── config.py         # Env loading, paths, KEYWORDS, regexes, statuses
-│   ├── http_client.py    # Single urllib HTTP entrypoint (monkeypatchable)
-│   ├── fetch.py          # GET /vacancies search + filters
-│   ├── store.py          # vacancies.json source-of-truth, schema, merge, save
-│   ├── enrich.py         # GET /vacancies/{id} full details
-│   ├── cover.py          # Ollama cover letters (parallel) + fallback
-│   ├── apply.py          # POST /negotiations, status mapping, batch control
-│   ├── sheets_export.py  # Google Sheets clear+rewrite (visualization only)
-│   └── telegram.py       # Bot API report/alert, parse_mode=HTML
-├── scripts/              # Standalone ops scripts
+│   ├── pipeline.py                     # Orchestrator (8 stages)
+│   ├── config.py                       # Env, paths, keywords, regexes, statuses
+│   ├── http_client.py                  # Single HTTP entrypoint
+│   ├── auth.py                         # User OAuth tokens + refresh-on-403
+│   ├── fetch.py                        # GET /vacancies + filters
+│   ├── store.py                        # vacancies.json source of truth + schema
+│   ├── enrich.py                       # GET /vacancies/{id} full details
+│   ├── cover.py                        # Ollama cover letters + fallback
+│   ├── apply.py                        # POST /negotiations + status machine
+│   ├── sheets_export.py                # Full-rewrite of HH_AI tab
+│   └── telegram.py                     # HTML report + alerts
+├── scripts/                            # Production scripts (legacy + ops)
 │   ├── __init__.py
-│   ├── hh_ai_vacancies.py        # Old monolith scraper (reference impl, deployed cron 99a55e0f5ac4)
-│   ├── hh_token_updater.py       # Playwright HH OAuth refresh for old app-token scraper
-│   └── migrate_seen.py           # One-shot legacy seen.json -> vacancies.json
-├── evals/                # Post-run evaluation
+│   ├── hh_ai_vacancies.py              # Legacy monolith scraper (~900 lines)
+│   ├── hh_token_updater.py             # Playwright HH app-token renewal (OTP)
+│   └── migrate_seen.py                 # One-shot legacy seen.json → vacancies.json
+├── tests/                              # Pytest suite (53 cases), stdlib + pytest
 │   ├── __init__.py
-│   ├── check_metrics.py          # Deterministic goal check (exit 0 = ready)
-│   └── rate_cover_letters.py     # LLM rubric scorer (threshold >=7/10)
-├── tests/                # pytest suite (53 cases, stdlib + pytest only)
-│   ├── __init__.py
-│   ├── conftest.py               # home/mock_http/no_sleep/tg_capture/tokens_file + fixtures
+│   ├── conftest.py                     # home/mock_http/no_sleep/tg_capture/tokens_file + fixtures
 │   ├── test_apply.py
 │   ├── test_auth.py
 │   ├── test_cover.py
@@ -39,197 +43,190 @@ hh-ai-vacancies/
 │   ├── test_pipeline_e2e.py
 │   ├── test_sheets_telegram.py
 │   └── test_store.py
-├── config/
-│   └── cron.yaml          # Hermes cron definition for the new pipeline
-├── docs/                  # Architecture/contract docs
-│   ├── api-contract.md    # Verified HH /negotiations + /token contract
-│   └── DEPLOY.md          # Cutover + deployment steps
-├── references/            # Dated incident logs + design notes (search here first when debugging)
-│   ├── archive-filter-incident-2026-06-27.md
+├── evals/                              # Post-run verification + LLM rubric
+│   ├── __init__.py
+│   ├── check_metrics.py               # Deterministic goal check (exit 0 = goal reached)
+│   └── rate_cover_letters.py           # Ollama rubric, threshold ≥7/10
+├── references/                         # Dated design notes + incident logs
 │   ├── hh-api-notes.md
-│   ├── hh-cover-letter-generation.md
-│   ├── hh-token-automation.md
 │   ├── hh-token-types-and-revocation.md
-│   ├── gws-batch-write-pattern.md
+│   ├── hh-token-automation.md
+│   ├── hh-cover-letter-generation.md
+│   ├── hh-sheet-columns-correction-2026-06-28.md
+│   ├── hh-userscript-auto-response.md
+│   ├── ai-pm-hh-api-migration.md
+│   ├── ai-pm-vacancies-processor.py
+│   ├── archive-filter-incident-2026-06-27.md
 │   ├── google-sheets-color-feedback-loop.md
+│   ├── gws-batch-write-pattern.md
+│   ├── proactive-cron-failure-handling.md
+│   ├── skill-patch-marker-2026-07-05.md
 │   ├── telegram-bot-patterns.md
 │   ├── telegram-html-vs-markdownv2.md
-│   ├── proactive-cron-failure-handling.md
-│   ├── vacancy-cron-timeout-case-2026.md
-│   └── ... (see references/ for full list)
-├── templates/             # Reusable starter templates
-│   ├── hh_auto_response.user.js  # Tampermonkey userscript for HH auto-respond
-│   └── hh_vacancy_scraper.py      # Copy-and-adjust scraper template
-├── CLAUDE.md              # Guidance for Claude Code (read before editing)
-├── SKILL.md               # Umbrella skill doc, recipes, incident history
-├── README.md              # Project overview (documents the OLD monolith path)
-└── .gitignore
+│   ├── upwork-title-link-correction-2026-06-25.md
+│   └── vacancy-cron-timeout-case-2026-06.md
+└── templates/                          # Boilerplate for new HH trackers
+    ├── hh_vacancy_scraper.py
+    └── hh_auto_response.user.js        # Tampermonkey/Violentmonkey userscript
 ```
 
-Note: runtime `data/` (vacancies.json, hh_tokens.json, last_run_report.json) is created at runtime under `$HH_PIPELINE_HOME` (default repo root) — not committed. Legacy seen file lives at `~/.hermes/hh_ai_seen.json`. Google creds at `~/.config/gws/credentials.json`. Secrets in `~/.hermes/.env`.
+Runtime-only (not in repo, created at runtime under `HH_PIPELINE_HOME` or `~/.hermes/hh-ai-vacancies/`):
+
+```
+data/
+├── vacancies.json          # Source of truth (vacancy_id -> record)
+├── vacancies.json.bak      # Previous version backup
+├── hh_tokens.json          # User OAuth {access, refresh, expires_in, obtained_at}
+└── last_run_report.json    # Written by pipeline.run(), read by evals/check_metrics.py
+```
 
 ## Directory Purposes
 
-**`src/`:**
-- Purpose: The new autonomous apply pipeline — the primary code path
-- Contains: One module per pipeline stage + shared infra (`http_client`, `config`); all stdlib-only
-- Key files: `src/pipeline.py` (orchestrator), `src/store.py` (source of truth), `src/auth.py` (OAuth), `src/apply.py` (`/negotiations`)
+**`hh-ai-vacancies/src/`:**
+- Purpose: the new modular pipeline package (apply-enabled)
+- Contains: 11 Python modules, one orchestrator + 8 stage modules + config + http_client
+- Key files: `pipeline.py` (orchestrator), `store.py` (schema + source of truth), `http_client.py` (single HTTP seam), `apply.py` (negotiations status machine)
 
-**`scripts/`:**
-- Purpose: Standalone operator scripts, not imported by the pipeline
-- Contains: Old monolith reference scraper, Playwright token updater, one-shot migration
-- Key files: `scripts/hh_ai_vacancies.py` (900-line legacy scraper, still the active cron until cutover), `scripts/migrate_seen.py`
+**`hh-ai-vacancies/scripts/`:**
+- Purpose: production scripts — legacy monolith, ops/token renewal, one-shot migrations
+- Contains: 3 Python scripts
+- Key files: `hh_ai_vacancies.py` (legacy 900-line scraper), `hh_token_updater.py` (Playwright OTP), `migrate_seen.py`
 
-**`evals/`:**
-- Purpose: Post-run quality checks (deterministic + LLM rubric)
-- Contains: `check_metrics.py` (goal gate, reads `data/last_run_report.json`), `rate_cover_letters.py` (independent Ollama judge)
-- Key files: `evals/check_metrics.py`, `evals/rate_cover_letters.py`
+**`hh-ai-vacancies/tests/`:**
+- Purpose: pytest suite (53 cases), no live network
+- Contains: `conftest.py` + 8 test modules mirroring the `src/` stages
+- Key files: `conftest.py` (fixtures: `home`, `mock_http`, `no_sleep`, `tg_capture`, `tokens_file`; helpers: `make_resp`, `search_item`, `vacancy_details`)
 
-**`tests/`:**
-- Purpose: pytest unit/integration/e2e suite, fully network-isolated via `MockHttp`
-- Contains: `conftest.py` fixtures + 8 test modules mirroring `src/` stages
-- Key files: `tests/conftest.py` (all fixtures and helpers: `home`, `mock_http`, `no_sleep`, `tg_capture`, `tokens_file`, `make_resp`, `search_item`, `vacancy_details`)
+**`hh-ai-vacancies/evals/`:**
+- Purpose: post-run verification + LLM rubric for cover letters
+- Contains: `check_metrics.py` (deterministic goal gate) and `rate_cover_letters.py` (Ollama rubric)
 
-**`config/`:**
+**`hh-ai-vacancies/references/`:**
+- Purpose: dated design notes and incident logs — search here before debugging a known area
+- Contains: markdown notes + one reference Python processor
+- Generated: No; committed: Yes
+
+**`hh-ai-vacancies/templates/`:**
+- Purpose: boilerplate for spinning up new HH vacancy trackers
+- Contains: `hh_vacancy_scraper.py` (boilerplate) + `hh_auto_response.user.js` (Tampermonkey userscript)
+- Generated: No; committed: Yes
+
+**`hh-ai-vacancies/config/`:**
 - Purpose: Hermes cron job definition for the new pipeline
-- Contains: `cron.yaml` (schedule, env, `script: python3 -m src.pipeline`)
+- Contains: `cron.yaml` only
+- Generated: No; committed: Yes
 
-**`docs/`:**
-- Purpose: Verified external contracts and deployment runbook
-- Contains: `api-contract.md` (HH `/negotiations` + `/token` error mapping), `DEPLOY.md` (cutover steps)
-
-**`references/`:**
-- Purpose: Dated incident logs and design notes — search here before debugging a known-area problem
-- Contains: ~17 markdown files covering token automation, archive-filter incident, gws batch-write, telegram HTML vs markdown, cron timeout case, etc.
-
-**`templates/`:**
-- Purpose: Copy-and-adjust starter implementations for other HH scraping projects
-- Contains: Tampermonkey userscript (`hh_auto_response.user.js`) and scraper template (`hh_vacancy_scraper.py`)
+**`hh-ai-vacancies/docs/`:**
+- Purpose: verified external API contract + deploy runbook
+- Contains: `api-contract.md` (HH negotiations/token/errors), `DEPLOY.md` (setup + cutover T7–T9)
 
 ## Key File Locations
 
 **Entry Points:**
-- `src/pipeline.py`: New pipeline orchestrator (`python3 -m src.pipeline`); `run()` is the function, exit code is its return
-- `scripts/hh_ai_vacancies.py`: Old monolith (standalone `__main__`)
-- `evals/check_metrics.py`: Goal gate (run after pipeline)
-- `scripts/migrate_seen.py`: One-shot legacy migration
-- `scripts/hh_token_updater.py`: Playwright OAuth refresh for old scraper
+- `hh-ai-vacancies/src/pipeline.py`: orchestrator; `python3 -m src.pipeline`
+- `hh-ai-vacancies/evals/check_metrics.py`: post-run goal check
+- `hh-ai-vacancies/scripts/hh_ai_vacancies.py`: legacy monolith (cron `99a55e0f5ac4`)
+- `hh-ai-vacancies/scripts/hh_token_updater.py`: legacy app-token renewal
+- `hh-ai-vacancies/scripts/migrate_seen.py`: one-shot migration
 
 **Configuration:**
-- `src/config.py`: Env loading, paths, `KEYWORDS`, `JUNK_RE`/`ARCHIVE_RE`/`RESUME_RE`, `VALID_STATUSES`, Sheets IDs, Ollama defaults
-- `config/cron.yaml`: Hermes cron schedule + env
-- `~/.hermes/.env`: Secrets (loaded by `config.load_env_file`, not committed)
-- `~/.config/gws/credentials.json`: Google Sheets OAuth refresh token
+- `hh-ai-vacancies/src/config.py`: env loader, path helpers, keywords, regex filters, statuses, Sheet IDs
+- `hh-ai-vacancies/config/cron.yaml`: Hermes cron (schedule, env, workdir)
+- `~/.hermes/.env`: secrets (HH_APP_TOKEN, HH_RESUME_ID, TELEGRAM_*, OLLAMA_*) — NOT in repo
+- `~/.config/gws/credentials.json`: Google OAuth refresh token — NOT in repo
 
 **Core Logic:**
-- `src/http_client.py`: Single HTTP entrypoint (`request`, `HttpResponse`, `NetworkError`)
-- `src/auth.py`: `api_request` (Bearer + auto-refresh), `load_tokens`/`save_tokens` (atomic), `refresh`
-- `src/store.py`: `SCHEMA`, `new_record`, `validate_record`, `load`/`save` (atomic + `.bak`), `merge`, `duplicates`, `migrate_seen`
-- `src/apply.py`: `apply_one`, `apply_batch`, `select_candidates`, `BatchStop`
-- `src/cover.py`: `generate_for_record`, `generate_all`, `call_ollama`, `clean_letter`, `letter_ok`, `fallback_letter`
-
-**State (runtime, not committed):**
-- `data/vacancies.json`: Source of truth (keyed by `vacancy_id`)
-- `data/hh_tokens.json`: User OAuth tokens (atomic save)
-- `data/last_run_report.json`: Metrics consumed by `evals/check_metrics.py`
-- `data/vacancies.json.bak` / `data/hh_tokens.json.tmp`: Backup/temp from atomic writes
+- `hh-ai-vacancies/src/pipeline.py:run()`: 8-stage flow
+- `hh-ai-vacancies/src/store.py`: SCHEMA, `new_record`, `validate_record`, `merge`, `save` (atomic)
+- `hh-ai-vacancies/src/apply.py`: `apply_one`, `apply_batch`, `select_candidates`, `BatchStop`
+- `hh-ai-vacancies/src/auth.py`: `api_request` (refresh-on-403-once), `refresh`, `save_tokens`
+- `hh-ai-vacancies/src/http_client.py`: `request`, `HttpResponse`, `NetworkError`
 
 **Testing:**
-- `tests/conftest.py`: `home`, `mock_http` (`MockHttp` FIFO queue), `no_sleep`, `tg_capture`, `tokens_file`, plus `make_resp`/`search_item`/`vacancy_details` fixture builders
-- `tests/test_pipeline_e2e.py`: End-to-end pipeline test with full `MockHttp` queue
+- `hh-ai-vacancies/tests/conftest.py`: `MockHttp`, `home`, `tokens_file`, helpers
+- `hh-ai-vacancies/tests/test_pipeline_e2e.py`: end-to-end pipeline test
+- `hh-ai-vacancies/tests/test_apply.py`: apply status machine + BatchStop
+- `hh-ai-vacancies/tests/test_store.py`: schema, merge, migration
+
+**External Contract / Docs:**
+- `hh-ai-vacancies/docs/api-contract.md`: HH API contract (negotiations, token, error mapping)
+- `hh-ai-vacancies/docs/DEPLOY.md`: deploy + cutover runbook
 
 ## Naming Conventions
 
 **Files:**
-- Python modules: `snake_case.py` (`http_client.py`, `sheets_export.py`)
-- Test files: `test_<module>.py` co-located in `tests/` (`test_apply.py`, `test_store.py`, `test_fetch_enrich.py`, `test_sheets_telegram.py`, `test_pipeline_e2e.py`)
-- Evals: verb-noun (`check_metrics.py`, `rate_cover_letters.py`)
-- Scripts: `hh_<purpose>.py` (`hh_ai_vacancies.py`, `hh_token_updater.py`); migration as `migrate_<entity>.py`
-- Reference notes: `<topic>-<type>-<YYYY-MM-DD>.md` for incidents (`archive-filter-incident-2026-06-27.md`), otherwise `<topic>.md` (`hh-api-notes.md`)
-- Templates: `hh_<purpose>.<ext>` (`hh_auto_response.user.js`, `hh_vacancy_scraper.py`)
+- `src/` modules: single lowercase word per stage (`fetch.py`, `enrich.py`, `cover.py`, `apply.py`, `store.py`, `auth.py`, `telegram.py`, `sheets_export.py`, `http_client.py`, `pipeline.py`, `config.py`). Underscore only for compound names (`sheets_export.py`, `http_client.py`).
+- Tests: `test_<module>.py` mirroring the `src/` module under test (`test_apply.py`, `test_store.py`, `test_fetch_enrich.py`, `test_pipeline_e2e.py`, `test_sheets_telegram.py`, `test_cron_config.py`).
+- Scripts: `hh_ai_vacancies.py`, `hh_token_updater.py`, `migrate_seen.py` — snake_case, verb-oriented.
+- Evals: `check_metrics.py`, `rate_cover_letters.py` — verb phrase.
+- References: `kebab-case-with-date.md` for incident logs (`archive-filter-incident-2026-06-27.md`, `upwork-title-link-correction-2026-06-25.md`); `kebab-case.md` for design notes (`hh-api-notes.md`, `telegram-html-vs-markdownv2.md`).
 
 **Directories:**
-- Lowercase, no separators (`src`, `tests`, `evals`, `references`, `templates`, `config`, `docs`, `scripts`)
+- Lowercase, no separators (`src`, `tests`, `evals`, `scripts`, `templates`, `references`, `config`, `docs`).
 
-**Module-level constants:**
-- `UPPER_SNAKE` (`KEYWORDS`, `JUNK_RE`, `ARCHIVE_RE`, `RESUME_RE`, `VALID_STATUSES`, `STATUS_SENT`, `SCHEMA`, `MAX_RETRIES_429`, `COLUMNS`, `NEGOTIATIONS_URL`, `SPREADSHEET_ID`, `SHEET_GID`)
-
-**Functions:**
-- `snake_case` (`fetch_all`, `enrich_new`, `apply_batch`, `select_candidates`, `generate_all`, `format_report`, `vacancy_id_from_url`)
-- Predicates prefixed `is_`/`has_` (`is_active`, `is_relevant`, `letter_ok`) — note `title_ok` is not used; relevance lives in `is_relevant`
-- Private helpers prefixed `_` (`_post_negotiation`, `_negotiation_error`, `_set_status`, `_is_auth_error`, `_work_format`, `_sheets_url`, `_send`)
-
-**Classes/exceptions:**
-- `CapWord` for errors and wrappers: `AuthError`, `BatchStop`, `NetworkError`, `HttpResponse`, `MockHttp`
+**Module symbols:**
+- Functions: `snake_case` (`fetch_all`, `apply_one`, `apply_batch`, `select_candidates`, `record_to_row`, `build_rows`, `generate_for_record`, `generate_all`, `vacancy_id_from_url`).
+- Constants: `UPPER_SNAKE` (`KEYWORDS`, `JUNK_RE`, `ARCHIVE_RE`, `RESUME_RE`, `COLUMNS`, `MAX_RETRIES_429`, `NEGOTIATIONS_URL`, `SPREADSHEET_ID`, `SHEET_GID`).
+- Config accessors: `lower_snake()` functions (`dry_run()`, `apply_limit()`, `resume_id()`, `telegram_bot_token()`, `telegram_chat_id()`, `ollama_api_key()`, `vacancies_path()`, `tokens_path()`, `run_report_path()`, `data_dir()`).
+- Status string literals are Russian (`отправлено`, `не отправлено`, `тест`) — defined in `hh-ai-vacancies/src/config.py:107-110`.
 
 ## Where to Add New Code
 
 **New pipeline stage:**
-- Create `src/<stage>.py` as a self-contained module with pure functions operating on the `store` dict (and `tokens` where HH calls are needed).
-- Wire it into `src/pipeline.py:run()` at the correct position; persist via `store.save()` before any external sink.
-- Route ALL HTTP through `src/http_client.request` (never `urllib.request.urlopen` directly).
-- Add a `tests/test_<stage>.py` mirroring existing test style; use `mock_http`, `home`, `tokens_file` fixtures from `tests/conftest.py`.
+- Create `hh-ai-vacancies/src/<stage>.py` (one-word lowercase name).
+- Route all HTTP through `http_client.request`; thread `(result, tokens)` returns if it calls HH.
+- Add the call in sequence inside `hh-ai-vacancies/src/pipeline.py:run()` (numbered comment block).
+- Add `hh-ai-vacancies/tests/test_<stage>.py` using `home`, `mock_http`, `tokens_file` fixtures from `hh-ai-vacancies/tests/conftest.py`.
+- Add any new env vars / regexes / constants to `hh-ai-vacancies/src/config.py`.
 
-**New HH API endpoint integration:**
-- Add the call in the relevant stage module via `auth.api_request(method, url, tokens, ...)` so you inherit Bearer auth + auto-refresh.
-- Always set `User-Agent: config.HH_USER_AGENT` (handled inside `api_request`).
-- Extend `docs/api-contract.md` with verified request/response/error mapping.
+**New HH API endpoint:**
+- Reuse `auth.api_request(method, url, tokens, ...)` — it handles `User-Agent`, Bearer header, and refresh-on-403-once (`hh-ai-vacancies/src/auth.py:75`).
+- If the endpoint needs a new error mapping, extend the relevant stage module (e.g., add a branch to `apply._negotiation_error`).
+- Document the contract in `hh-ai-vacancies/docs/api-contract.md`.
 
-**New search keyword / filter:**
-- Add to `config.KEYWORDS` (list) or extend `JUNK_RE`/`ARCHIVE_RE`/`RESUME_RE` in `src/config.py`.
-- Add regression coverage in `tests/test_fetch_enrich.py` using `search_item(...)`.
+**New env var / config knob:**
+- Add to `hh-ai-vacancies/src/config.py` — either a module-level constant or an accessor function (prefer accessor for secrets / overridable values).
+- Document in `hh-ai-vacancies/README.md` env table and `hh-ai-vacancies/CLAUDE.md`.
+- For cron env, also add to `hh-ai-vacancies/config/cron.yaml:env`.
 
-**New env var / runtime flag:**
-- Add a getter in `src/config.py` (follow `dry_run()`/`apply_limit()` pattern); set a safe default.
-- Mirror in `config/cron.yaml:env` if it should be set on the cron host.
-- Document in `CLAUDE.md` "Config & secrets".
+**New test fixture / helper:**
+- Add to `hh-ai-vacancies/tests/conftest.py` — keep all shared fixtures here so individual test files stay focused.
+- HH-shaped response builders: extend `make_resp`, `search_item`, `vacancy_details` patterns.
 
-**New status / status_reason:**
-- Add status constant + include in `config.VALID_STATUSES` if it is a terminal status; otherwise use a free-form `status_reason`.
-- Update `apply.select_candidates` `RETRYABLE` set if the new reason should be re-queued across runs.
-- Add `validate_record` / `evals/check_metrics.py` coverage.
+**New utility / shared helper:**
+- If used across stages, add as a function in the relevant `src/` module (e.g., `store.now_iso`, `store.vacancy_id_from_url`).
+- Avoid creating a generic `utils.py` — the project keeps helpers co-located with their domain.
 
-**New Google Sheets column:**
-- Edit `sheets_export.COLUMNS` and `record_to_row` in `src/sheets_export.py`.
-- Confirm the new shape before the first write — changing columns later requires clearing and rewriting the sheet (see `references/hh-sheet-columns-correction-2026-06-28.md`).
-- Update `evals/check_metrics.py` if it asserts column count.
+**New reference / incident note:**
+- Add a `kebab-case[-date].md` file under `hh-ai-vacancies/references/`.
+- Cross-link from `hh-ai-vacancies/CLAUDE.md` and `hh-ai-vacancies/SKILL.md` if the lesson affects future edits.
 
-**New Telegram report field:**
-- Edit `telegram.format_report` (`src/telegram.py`); escape dynamic content with `telegram.esc`; keep `parse_mode=HTML`.
-
-**New test fixture/helper:**
-- Add to `tests/conftest.py`; reuse `make_resp`, `search_item`, `vacancy_details` to build HH-shaped payloads.
-
-**New eval:**
-- Add `evals/<name>.py` reading from `data/vacancies.json` / `data/last_run_report.json`; exit 0 on pass.
-
-**New ops script:**
-- Add `scripts/<name>.py` with `sys.path.insert(0, ...)` and import from `src`; run as `python3 -m scripts.<name>`.
-
-**Utilities:**
-- Shared helpers belong in the relevant `src/<stage>.py` (no separate `utils.py` exists); cross-stage helpers go in `src/store.py` (`now_iso`, `vacancy_id_from_url`) or `src/config.py`.
+**New tracker (separate project):**
+- Start from `hh-ai-vacancies/templates/hh_vacancy_scraper.py` (boilerplate).
 
 ## Special Directories
 
-**`data/` (runtime, not committed):**
-- Purpose: All mutable runtime state — `vacancies.json`, `hh_tokens.json`, `last_run_report.json`, plus `.bak`/`.tmp` artifacts
-- Generated: Yes (created on first run / by tests under `HH_PIPELINE_HOME`)
-- Committed: No (override root via `HH_PIPELINE_HOME` env var; tests set it to a tmp path)
-
-**`references/`:**
-- Purpose: Dated incident logs and design notes — read before debugging a known-area problem
-- Generated: No (hand-curated)
-- Committed: Yes
-
-**`templates/`:**
-- Purpose: Copy-and-adjust starter implementations for new HH scraping projects
+**`hh-ai-vacancies/references/`:**
+- Purpose: dated incident logs + design notes — the "lessons learned" archive
 - Generated: No
 - Committed: Yes
+- Convention: search here first when debugging filtering, Sheets columns, Telegram formatting, or token issues
 
-**`__pycache__/` (and `.pytest_cache/`, `.coverage*`):**
-- Purpose: Python bytecode / pytest cache / coverage artifacts
+**`data/` (runtime, under `HH_PIPELINE_HOME` or workdir):**
+- Purpose: source of truth + tokens + last run report
+- Generated: Yes (at runtime)
+- Committed: No (gitignored)
+- Critical files: `vacancies.json` (source of truth), `vacancies.json.bak` (backup), `hh_tokens.json` (OAuth pair), `last_run_report.json` (eval input)
+
+**`hh-ai-vacancies/.planning/codebase/`:**
+- Purpose: GSD codebase map output (this document lives here)
+- Generated: Yes (by `/gsd-map-codebase`)
+- Committed: as per GSD workflow
+
+**`hh-ai-vacancies/.pytest_cache/` and `__pycache__/`:**
+- Purpose: pytest + Python bytecode cache
 - Generated: Yes
-- Committed: No (per `.gitignore`)
+- Committed: No
 
 ---
 
