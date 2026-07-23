@@ -1,13 +1,43 @@
 """User OAuth: access/refresh tokens, авто-refresh при 403 oauth, алерт при фатале.
-Tokens: data/hh_tokens.json {access_token, refresh_token, obtained_at, expires_in}."""
+Tokens: data/hh_tokens.json {access_token, refresh_token, obtained_at, expires_in}.
+
+APPL fallback: on datacenter IPs the user token gets 403 "forbidden" on
+read endpoints (GET /vacancies, GET /vacancies/{id}).  When that happens we
+transparently fall back to the APPL (client_credentials) token for read
+operations.  POST /negotiations still requires the user token and will only
+work from a residential IP."""
 import json
 import os
+import sys
 import urllib.parse
 
 from . import config, http_client, telegram
 from .store import now_iso
 
 TOKEN_URL = f"{config.HH_API}/token"
+
+# --- APPL token fallback (client_credentials) ------------------------------- #
+_APPL_TOKEN = None  # cached APPL token
+
+
+def _get_appl_token():
+    """Get APPL token via client_credentials grant. Cached per-process."""
+    global _APPL_TOKEN
+    if _APPL_TOKEN:
+        return _APPL_TOKEN
+    # Try ~/.hermes/cache/hh_token.json first (shared with other scripts)
+    cache_path = os.path.expanduser("~/.hermes/cache/hh_token.json")
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path) as f:
+                _APPL_TOKEN = json.load(f).get("access_token", "")
+                if _APPL_TOKEN:
+                    return _APPL_TOKEN
+        except Exception:
+            pass
+    # Fall back to HH_APP_TOKEN from env
+    _APPL_TOKEN = os.environ.get("HH_APP_TOKEN", "")
+    return _APPL_TOKEN
 
 
 class AuthError(Exception):
@@ -72,13 +102,30 @@ def _is_auth_error(resp):
     return any(e.get("type") == "oauth" for e in errors)
 
 
+def _is_forbidden(resp):
+    """Generic 403 forbidden (not oauth error) — IP block or access denied."""
+    if resp.status != 403:
+        return False
+    try:
+        errors = resp.json().get("errors", [])
+        return any(e.get("type") == "forbidden" for e in errors)
+    except Exception:
+        return False
+
+
 def api_request(method, url, tokens, data=None, headers=None, tokens_path=None, _retried=False):
     """HH API call with Bearer + авто-refresh-once на 403 oauth.
-    Returns (resp, tokens). Raises AuthError (после алерта) если refresh не спас."""
+    Returns (resp, tokens). Raises AuthError (после алерта) если refresh не спас.
+
+    APPL fallback: on 403 "forbidden" (IP block) for GET requests, retries
+    with the APPL (client_credentials) token.  POST /negotiations is never
+    retried with APPL — it requires user auth."""
     h = {"User-Agent": config.HH_USER_AGENT, "Accept": "application/json"}
     h.update(headers or {})
     h["Authorization"] = f"Bearer {tokens.get('access_token', '')}"
     resp = http_client.request(method, url, headers=h, data=data)
+
+    # 403 oauth → refresh + retry
     if _is_auth_error(resp) and not _retried:
         try:
             tokens = refresh(tokens, tokens_path)
@@ -93,4 +140,15 @@ def api_request(method, url, tokens, data=None, headers=None, tokens_path=None, 
     if _is_auth_error(resp) and _retried:
         telegram.send_alert("🚨 <b>HH.ru auth failure</b>\n403 oauth сразу после refresh — токен невалиден.")
         raise AuthError(f"403 oauth after refresh: {resp.text[:200]}")
+
+    # 403 forbidden (not oauth) on GET → try APPL token fallback (IP block)
+    if _is_forbidden(resp) and method == "GET" and not _retried:
+        appl = _get_appl_token()
+        if appl and appl != tokens.get("access_token", ""):
+            h2 = dict(h)
+            h2["Authorization"] = f"Bearer {appl}"
+            resp2 = http_client.request(method, url, headers=h2, data=data)
+            if resp2.status != 403:
+                return resp2, tokens
+
     return resp, tokens
