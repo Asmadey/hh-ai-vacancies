@@ -122,7 +122,10 @@ def _save_pair(access_token, refresh_token, expires_in):
     """Пишет пару в env-файл (HH_OAUTH_*) и в data/hh_tokens.json."""
     save_env_key("HH_OAUTH_ACCESS_TOKEN", access_token)
     save_env_key("HH_OAUTH_REFRESH_TOKEN", refresh_token)
-    save_env_key("HH_APP_TOKEN", access_token)  # для старого скрепера, если используется
+    # NOTE: do NOT overwrite HH_APP_TOKEN — that slot is for the APPL
+    # (client_credentials) token used by legacy scrapers.  The user OAuth
+    # pair lives in HH_OAUTH_ACCESS_TOKEN / HH_OAUTH_REFRESH_TOKEN and
+    # data/hh_tokens.json.
     expires_at = int(datetime.now(timezone.utc).timestamp()) + int(expires_in or 0)
     save_env_key("HH_OAUTH_EXPIRES_AT", str(expires_at))
     write_tokens_to_store(access_token, refresh_token, expires_in)
@@ -165,7 +168,7 @@ def mode_link():
         "redirect_uri": redirect_uri,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
-    }
+}
     auth_url = f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
 
     print("=" * 64)
